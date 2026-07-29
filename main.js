@@ -4,7 +4,7 @@ const path = require('node:path');
 
 let mainWindow;
 
-const isScreenshotRun = process.argv.some((argument) => ['--screenshot', '--screenshot-demo', '--screenshot-table', '--screenshot-markdown', '--screenshot-appearance', '--screenshot-app-icon', '--screenshot-swap', '--screenshot-minimap', '--screenshot-favorites'].includes(argument));
+const isScreenshotRun = process.argv.some((argument) => ['--screenshot', '--screenshot-demo', '--screenshot-table', '--screenshot-markdown', '--screenshot-appearance', '--screenshot-app-icon', '--screenshot-swap', '--screenshot-minimap', '--screenshot-favorites', '--screenshot-title'].includes(argument));
 if (isScreenshotRun) app.setPath('userData', path.join(__dirname, '.artifacts', 'electron-test-profile'));
 process.on('unhandledRejection', (error) => {
   console.error('Unhandled rejection:', error);
@@ -79,7 +79,7 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   mainWindow.once('ready-to-show', async () => {
-    const screenshotMode = process.argv.includes('--screenshot') || process.argv.includes('--screenshot-demo') || process.argv.includes('--screenshot-table') || process.argv.includes('--screenshot-markdown') || process.argv.includes('--screenshot-appearance') || process.argv.includes('--screenshot-app-icon') || process.argv.includes('--screenshot-swap') || process.argv.includes('--screenshot-minimap') || process.argv.includes('--screenshot-favorites');
+    const screenshotMode = process.argv.includes('--screenshot') || process.argv.includes('--screenshot-demo') || process.argv.includes('--screenshot-table') || process.argv.includes('--screenshot-markdown') || process.argv.includes('--screenshot-appearance') || process.argv.includes('--screenshot-app-icon') || process.argv.includes('--screenshot-swap') || process.argv.includes('--screenshot-minimap') || process.argv.includes('--screenshot-favorites') || process.argv.includes('--screenshot-title');
     if (screenshotMode) {
       if (process.argv.includes('--screenshot-demo')) {
         const samplePath = path.join(__dirname, '.artifacts', 'data-matrix.png');
@@ -388,6 +388,41 @@ function createWindow() {
           };
         })()`);
         console.log('Favorites, collapse and cascade smoke test:', favoritesResult);
+      }
+      if (process.argv.includes('--screenshot-title')) {
+        await mainWindow.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+          let attempts = 0;
+          const check = () => {
+            if (typeof state !== 'undefined' && state?.matrices) return resolve(true);
+            if (++attempts > 100) return reject(new Error('Workspace initialization timed out'));
+            setTimeout(check, 20);
+          };
+          check();
+        })`);
+        const titleResult = await mainWindow.webContents.executeJavaScript(`(() => {
+          try {
+            const title = document.querySelector('#matrixTitle');
+            title.focus();
+            title.select();
+            title.value = '可命名矩阵';
+            title.dispatchEvent(new Event('input', { bubbles: true }));
+            const style = getComputedStyle(title);
+            const treeLabel = document.querySelector('[data-matrix-id="' + activeMatrix().id + '"] .tree-label');
+            return {
+              focused: document.activeElement === title,
+              selectionStart: title.selectionStart,
+              selectionEnd: title.selectionEnd,
+              userSelect: style.userSelect,
+              cursor: style.cursor,
+              caretColor: style.caretColor,
+              renamed: activeMatrix().title === '可命名矩阵',
+              treeUpdated: treeLabel?.textContent === '可命名矩阵'
+            };
+          } catch (error) {
+            return { error: error.stack || String(error) };
+          }
+        })()`);
+        console.log('Matrix title editing smoke test:', titleResult);
       }
       mainWindow.showInactive();
       await new Promise((resolve) => setTimeout(resolve, 1400));
