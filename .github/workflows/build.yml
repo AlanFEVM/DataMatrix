@@ -22,9 +22,14 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
       - name: Verify desktop host resource
         shell: pwsh
-        run: if (-not (Test-Path "release/win-unpacked/resources/desktop-host.ps1")) { throw "Desktop host resource is missing from the package" }
+        run: |
+          $asarEntries = npx asar list "release/win-unpacked/resources/app.asar"
+          if (-not ($asarEntries | Select-String '[\\/]desktop-host\.js$' -Quiet)) { throw "Desktop host module is missing from the package" }
+          if (-not (Test-Path "release/win-unpacked/resources/app.asar.unpacked/node_modules/@koromix/koffi-win32-x64/win32_x64/koffi.node")) { throw "Koffi native module is missing from the package" }
       - uses: actions/upload-artifact@v4
         with:
           name: DataMatrix-Windows
-          path: release/*.exe
+          path: |
+            release/*.exe
+            release/*.zip
           if-no-files-found: error

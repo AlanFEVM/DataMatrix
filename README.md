@@ -27,7 +27,8 @@
 从 GitHub Releases 下载以下任一版本：
 
 - `DataMatrix-Setup-*.exe`：Windows 安装程序
-- `DataMatrix-Portable-*.exe`：免安装便携版
+- `DataMatrix-Portable-*.zip`：推荐的快速便携版；解压一次后运行 `DataMatrix.exe`，后续启动速度最快
+- `DataMatrix-Portable-*.exe`：单文件便携版；每次启动时会临时解压，适合优先考虑单文件携带的场景
 
 当前发布包未进行商业代码签名，Windows SmartScreen 可能显示未知发布者提示。源码和构建流程均在本仓库公开。
 
@@ -62,10 +63,11 @@ npm run dist
 
 ```text
 main.js            Electron 主进程与系统能力
+desktop-host.js    Windows 桌面壁纸层宿主
 preload.js         安全的渲染进程桥接
 renderer/          界面、交互与工作区状态逻辑
 build/             打包图标等资源
-scripts/           Windows 桌面宿主脚本
+scripts/           Windows 便携版打包脚本
 ```
 
 ## 贡献

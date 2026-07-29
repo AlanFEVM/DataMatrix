@@ -23,9 +23,12 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
       - name: Verify desktop host resource
         shell: pwsh
-        run: if (-not (Test-Path "release/win-unpacked/resources/desktop-host.ps1")) { throw "Desktop host resource is missing from the package" }
+        run: |
+          $asarEntries = npx asar list "release/win-unpacked/resources/app.asar"
+          if (-not ($asarEntries | Select-String '[\\/]desktop-host\.js$' -Quiet)) { throw "Desktop host module is missing from the package" }
+          if (-not (Test-Path "release/win-unpacked/resources/app.asar.unpacked/node_modules/@koromix/koffi-win32-x64/win32_x64/koffi.node")) { throw "Koffi native module is missing from the package" }
       - name: Publish release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create $env:GITHUB_REF_NAME release/*.exe --generate-notes --title "数据矩阵 $env:GITHUB_REF_NAME"
+        run: gh release create $env:GITHUB_REF_NAME release/*.exe release/*.zip --generate-notes --title "数据矩阵 $env:GITHUB_REF_NAME"

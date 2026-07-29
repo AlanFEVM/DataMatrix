@@ -1,20 +1,18 @@
 const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, screen, shell, Tray } = require('electron');
-const { execFile } = require('node:child_process');
 const fs = require('node:fs/promises');
 const path = require('node:path');
-const { promisify } = require('node:util');
 
 let mainWindow;
 let desktopMode = false;
 let desktopHostState = null;
 let desktopTray = null;
 let desktopModeTransition = null;
-
-const execFileAsync = promisify(execFile);
+let desktopHost = null;
 
 const screenshotFlags = ['--screenshot', '--screenshot-demo', '--screenshot-table', '--screenshot-markdown', '--screenshot-appearance', '--screenshot-app-icon', '--screenshot-swap', '--screenshot-minimap', '--screenshot-favorites', '--screenshot-title', '--screenshot-desktop'];
 const isScreenshotRun = process.argv.some((argument) => screenshotFlags.includes(argument));
-if (isScreenshotRun) app.setPath('userData', path.join(__dirname, '.artifacts', 'electron-test-profile'));
+const testArtifacts = app.isPackaged ? path.join(app.getPath('temp'), 'DataMatrix-electron-test') : path.join(__dirname, '.artifacts');
+if (isScreenshotRun) app.setPath('userData', path.join(testArtifacts, 'electron-test-profile'));
 process.on('unhandledRejection', (error) => {
   console.error('Unhandled rejection:', error);
   if (isScreenshotRun) app.exit(1);
@@ -69,35 +67,36 @@ async function fetchPageTitle(rawUrl) {
   }
 }
 
-function desktopHostScript() {
-  return app.isPackaged
-    ? path.join(process.resourcesPath, 'desktop-host.ps1')
-    : path.join(__dirname, 'scripts', 'desktop-host.ps1');
-}
-
 function nativeWindowHandle(window) {
   const value = window.getNativeWindowHandle();
-  return value.length >= 8 ? value.readBigUInt64LE().toString() : String(value.readUInt32LE());
+  return value.length >= 8 ? value.readBigUInt64LE() : BigInt(value.readUInt32LE());
 }
 
-async function runDesktopHost(action, options = {}) {
-  const args = [
-    '-NoProfile',
-    '-NonInteractive',
-    '-ExecutionPolicy', 'Bypass',
-    '-File', desktopHostScript(),
-    '-Action', action,
-    '-Handle', nativeWindowHandle(mainWindow)
-  ];
-  Object.entries(options).forEach(([key, value]) => args.push(`-${key}`, String(value)));
-  const { stdout } = await execFileAsync('powershell.exe', args, {
-    windowsHide: true,
-    timeout: 12000,
-    maxBuffer: 1024 * 1024
-  });
-  const output = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
-  if (!output) throw new Error('Windows desktop host returned no status.');
-  return JSON.parse(output);
+function getDesktopHost() {
+  desktopHost ||= require('./desktop-host').createDesktopHost();
+  return desktopHost;
+}
+
+function runDesktopHost(action, options = {}) {
+  const host = getDesktopHost();
+  const hwnd = nativeWindowHandle(mainWindow);
+  if (action === 'Attach') {
+    return host.attach(hwnd, {
+      x: options.X,
+      y: options.Y,
+      width: options.Width,
+      height: options.Height
+    });
+  }
+  if (action === 'Detach') {
+    return host.detach(hwnd, {
+      originalStyle: options.OriginalStyle,
+      originalExStyle: options.OriginalExStyle,
+      originalParent: options.OriginalParent
+    });
+  }
+  if (action === 'Status') return host.status(hwnd);
+  throw new Error(`Unsupported desktop host action: ${action}`);
 }
 
 function desktopModeStatus(error = '') {
@@ -168,7 +167,7 @@ async function applyDesktopMode(enabled) {
         Height: displayBounds.height
       });
       const status = await runDesktopHost('Status');
-      if (!nativeState.ok || !status.attached) throw new Error('Windows did not accept the wallpaper host window.');
+      if (!nativeState.ok || !status.attached || !status.visible) throw new Error('Windows did not keep the wallpaper window visible.');
       desktopHostState = { ...nativeState, windowState };
       desktopMode = true;
       createDesktopTray();
@@ -244,7 +243,7 @@ function createWindow() {
     const screenshotMode = isScreenshotRun;
     if (screenshotMode) {
       if (process.argv.includes('--screenshot-demo')) {
-        const samplePath = path.join(__dirname, '.artifacts', 'data-matrix.png');
+        const samplePath = path.join(testArtifacts, 'data-matrix.png');
         await mainWindow.webContents.executeJavaScript(`
           activeMatrix().cells['0:0'] = { type: 'file', title: '图片预览测试', value: ${JSON.stringify(samplePath)} };
           renderGrid();
@@ -624,7 +623,7 @@ function createWindow() {
       mainWindow.showInactive();
       await new Promise((resolve) => setTimeout(resolve, 1400));
       const image = await mainWindow.webContents.capturePage();
-      const outputDir = path.join(__dirname, '.artifacts');
+      const outputDir = testArtifacts;
       await fs.mkdir(outputDir, { recursive: true });
       await fs.writeFile(path.join(outputDir, 'data-matrix.png'), image.toPNG());
       app.quit();
@@ -642,6 +641,21 @@ function createWindow() {
     mainWindow = null;
   });
 }
+
+const singleInstanceLock = app.requestSingleInstanceLock();
+if (!singleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (desktopMode) {
+      setDesktopMode(false).catch(showDesktopModeError);
+      return;
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
 
 app.whenReady().then(() => {
   ipcMain.handle('workspace:load', readWorkspace);
@@ -698,6 +712,7 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

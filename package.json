@@ -1,6 +1,6 @@
 {
   "name": "data-matrix",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "一个面向文件、网页、结构化数据和嵌套矩阵的二维效率工作区。",
   "author": "AlanFEVM",
   "license": "MIT",
@@ -16,12 +16,13 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "check": "node --check main.js && node --check preload.js && node --check renderer/app.js",
+    "check": "node --check main.js && node --check desktop-host.js && node --check preload.js && node --check renderer/app.js",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --win nsis portable"
+    "dist": "electron-builder --win nsis portable && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable-zip.ps1"
   },
   "dependencies": {
     "dompurify": "^3.4.12",
+    "koffi": "^3.1.2",
     "lucide": "^0.468.0",
     "marked": "^18.0.7"
   },
@@ -41,16 +42,11 @@
     },
     "files": [
       "main.js",
+      "desktop-host.js",
       "preload.js",
       "renderer/**/*",
       "build/icon.png",
       "package.json"
-    ],
-    "extraResources": [
-      {
-        "from": "scripts/desktop-host.ps1",
-        "to": "desktop-host.ps1"
-      }
     ],
     "win": {
       "icon": "build/icon.png",
@@ -67,7 +63,8 @@
             "x64"
           ]
         }
-      ]
+      ],
+      "artifactName": "DataMatrix-Portable-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
