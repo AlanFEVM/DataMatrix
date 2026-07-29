@@ -16,6 +16,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - name: Prepare Electron runtime
+        shell: pwsh
+        run: |
+          node node_modules/electron/install.js
+          if (-not (Test-Path "node_modules/electron/dist/electron.exe")) { throw "Electron runtime installation failed" }
       - run: npm run check
       - name: Build Windows packages
         shell: pwsh
