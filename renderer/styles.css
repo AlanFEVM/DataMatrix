@@ -104,9 +104,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .window-drag { -webkit-app-region: drag; height: 100%; flex: 1; }
 .window-controls { align-self: stretch; display: flex; margin-left: auto; }
 .window-controls button { -webkit-app-region: no-drag; width: 46px; height: 100%; border-radius: 0; }
-.window-controls .desktop-mode-button { width: 42px; color: var(--text-soft); }
-.window-controls .desktop-mode-button:hover { color: var(--accent); background: var(--accent-faint); }
-.window-controls .desktop-mode-button.active { color: var(--accent); background: var(--accent-soft); }
 .window-controls button:disabled { opacity: .34; pointer-events: none; }
 .window-controls .close-button:hover { color: #fff; background: #c42b1c; }
 

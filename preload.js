@@ -13,8 +13,5 @@ contextBridge.exposeInMainWorld('matrixAPI', {
   minimize: () => ipcRenderer.invoke('window:minimize'),
   maximize: () => ipcRenderer.invoke('window:maximize'),
   close: () => ipcRenderer.invoke('window:close'),
-  getDesktopMode: () => ipcRenderer.invoke('window:desktop-mode-status'),
-  setDesktopMode: (enabled) => ipcRenderer.invoke('window:desktop-mode', enabled),
-  onMaximized: (callback) => ipcRenderer.on('window:maximized', (_event, value) => callback(value)),
-  onDesktopModeChanged: (callback) => ipcRenderer.on('window:desktop-mode-changed', (_event, value) => callback(value))
+  onMaximized: (callback) => ipcRenderer.on('window:maximized', (_event, value) => callback(value))
 });

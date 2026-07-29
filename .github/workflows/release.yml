@@ -36,12 +36,18 @@ jobs:
           }
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-      - name: Verify desktop host resource
+      - name: Verify package artifacts
         shell: pwsh
         run: |
-          $asarEntries = npx asar list "release/win-unpacked/resources/app.asar"
-          if (-not ($asarEntries | Select-String '[\\/]desktop-host\.js$' -Quiet)) { throw "Desktop host module is missing from the package" }
-          if (-not (Test-Path "release/win-unpacked/resources/app.asar.unpacked/node_modules/@koromix/koffi-win32-x64/win32_x64/koffi.node")) { throw "Koffi native module is missing from the package" }
+          $version = (Get-Content "package.json" -Raw | ConvertFrom-Json).version
+          $expected = @(
+            "release/DataMatrix-Setup-$version-x64.exe",
+            "release/DataMatrix-Portable-$version-x64.exe",
+            "release/DataMatrix-Portable-$version-x64.zip"
+          )
+          foreach ($artifact in $expected) {
+            if (-not (Test-Path $artifact)) { throw "Package artifact is missing: $artifact" }
+          }
       - name: Publish release
         shell: pwsh
         env:

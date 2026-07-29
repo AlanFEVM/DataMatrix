@@ -2028,40 +2028,6 @@ document.addEventListener('keydown', (event) => {
   }
 });
 
-function applyDesktopModeStatus(status) {
-  const button = $('#desktopModeBtn');
-  const active = Boolean(status?.active);
-  const supported = status?.supported !== false;
-  button.classList.toggle('active', active);
-  button.setAttribute('aria-pressed', String(active));
-  button.setAttribute('aria-label', active ? '取消桌面固定' : '固定到桌面');
-  button.title = active ? '取消桌面固定' : '固定到桌面';
-  button.innerHTML = `<i data-lucide="${active ? 'pin-off' : 'pin'}"></i>`;
-  button.disabled = !supported;
-  $('#minimizeBtn').disabled = active;
-  $('#maximizeBtn').disabled = active;
-  document.body.classList.toggle('desktop-mode', active);
-  refreshIcons();
-}
-
-$('#desktopModeBtn').addEventListener('click', async (event) => {
-  const button = event.currentTarget;
-  if (button.dataset.busy === 'true') return;
-  button.dataset.busy = 'true';
-  button.disabled = true;
-  const enabled = !button.classList.contains('active');
-  try {
-    const status = await window.matrixAPI.setDesktopMode(enabled);
-    applyDesktopModeStatus(status);
-    toast(status.active ? '数据矩阵已固定到桌面，可从系统托盘恢复' : '已恢复为普通窗口');
-  } catch (error) {
-    toast(`桌面固定失败：${error.message}`, true);
-    applyDesktopModeStatus(await window.matrixAPI.getDesktopMode());
-  } finally {
-    delete button.dataset.busy;
-  }
-});
-
 $('#minimizeBtn').addEventListener('click', () => window.matrixAPI.minimize());
 $('#maximizeBtn').addEventListener('click', () => window.matrixAPI.maximize());
 $('#closeBtn').addEventListener('click', () => window.matrixAPI.close());
@@ -2069,13 +2035,11 @@ window.matrixAPI.onMaximized((maximized) => {
   $('#maximizeBtn').innerHTML = `<i data-lucide="${maximized ? 'copy' : 'square'}"></i>`;
   refreshIcons();
 });
-window.matrixAPI.onDesktopModeChanged(applyDesktopModeStatus);
 
 async function init() {
   state = normalizeState(await window.matrixAPI.loadWorkspace());
   applyTheme();
   render();
-  applyDesktopModeStatus(await window.matrixAPI.getDesktopMode());
 }
 
 init().catch((error) => {
