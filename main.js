@@ -1,10 +1,19 @@
-const { app, BrowserWindow, dialog, ipcMain, nativeImage, net, shell } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, net, screen, shell, Tray } = require('electron');
+const { execFile } = require('node:child_process');
 const fs = require('node:fs/promises');
 const path = require('node:path');
+const { promisify } = require('node:util');
 
 let mainWindow;
+let desktopMode = false;
+let desktopHostState = null;
+let desktopTray = null;
+let desktopModeTransition = null;
 
-const isScreenshotRun = process.argv.some((argument) => ['--screenshot', '--screenshot-demo', '--screenshot-table', '--screenshot-markdown', '--screenshot-appearance', '--screenshot-app-icon', '--screenshot-swap', '--screenshot-minimap', '--screenshot-favorites', '--screenshot-title'].includes(argument));
+const execFileAsync = promisify(execFile);
+
+const screenshotFlags = ['--screenshot', '--screenshot-demo', '--screenshot-table', '--screenshot-markdown', '--screenshot-appearance', '--screenshot-app-icon', '--screenshot-swap', '--screenshot-minimap', '--screenshot-favorites', '--screenshot-title', '--screenshot-desktop'];
+const isScreenshotRun = process.argv.some((argument) => screenshotFlags.includes(argument));
 if (isScreenshotRun) app.setPath('userData', path.join(__dirname, '.artifacts', 'electron-test-profile'));
 process.on('unhandledRejection', (error) => {
   console.error('Unhandled rejection:', error);
@@ -60,6 +69,159 @@ async function fetchPageTitle(rawUrl) {
   }
 }
 
+function desktopHostScript() {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'desktop-host.ps1')
+    : path.join(__dirname, 'scripts', 'desktop-host.ps1');
+}
+
+function nativeWindowHandle(window) {
+  const value = window.getNativeWindowHandle();
+  return value.length >= 8 ? value.readBigUInt64LE().toString() : String(value.readUInt32LE());
+}
+
+async function runDesktopHost(action, options = {}) {
+  const args = [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy', 'Bypass',
+    '-File', desktopHostScript(),
+    '-Action', action,
+    '-Handle', nativeWindowHandle(mainWindow)
+  ];
+  Object.entries(options).forEach(([key, value]) => args.push(`-${key}`, String(value)));
+  const { stdout } = await execFileAsync('powershell.exe', args, {
+    windowsHide: true,
+    timeout: 12000,
+    maxBuffer: 1024 * 1024
+  });
+  const output = stdout.trim().split(/\r?\n/).filter(Boolean).at(-1);
+  if (!output) throw new Error('Windows desktop host returned no status.');
+  return JSON.parse(output);
+}
+
+function desktopModeStatus(error = '') {
+  return {
+    supported: process.platform === 'win32',
+    active: desktopMode,
+    error
+  };
+}
+
+function notifyDesktopMode(error = '') {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('window:desktop-mode-changed', desktopModeStatus(error));
+  }
+}
+
+function destroyDesktopTray() {
+  desktopTray?.destroy();
+  desktopTray = null;
+}
+
+function showDesktopModeError(error) {
+  const message = error?.message || String(error);
+  dialog.showErrorBox('桌面固定失败', `无法切换桌面固定模式。\n\n${message}`);
+}
+
+function createDesktopTray() {
+  if (desktopTray || process.platform !== 'win32') return;
+  const trayImage = nativeImage.createFromPath(path.join(__dirname, 'build', 'icon.png')).resize({ width: 20, height: 20 });
+  desktopTray = new Tray(trayImage);
+  desktopTray.setToolTip('数据矩阵 · 已固定到桌面');
+  desktopTray.setContextMenu(Menu.buildFromTemplate([
+    {
+      label: '恢复普通窗口',
+      click: () => setDesktopMode(false).catch(showDesktopModeError)
+    },
+    { type: 'separator' },
+    { label: '退出数据矩阵', click: () => app.quit() }
+  ]));
+  desktopTray.on('double-click', () => setDesktopMode(false).catch(showDesktopModeError));
+}
+
+async function applyDesktopMode(enabled) {
+  if (process.platform !== 'win32') return desktopModeStatus('当前系统不支持桌面固定模式');
+  if (!mainWindow || mainWindow.isDestroyed() || enabled === desktopMode) return desktopModeStatus();
+
+  if (enabled) {
+    const bounds = mainWindow.getBounds();
+    const displayBounds = screen.getDisplayMatching(bounds).bounds;
+    let nativeState = null;
+    const windowState = {
+      bounds,
+      maximized: mainWindow.isMaximized(),
+      fullScreen: mainWindow.isFullScreen()
+    };
+
+    try {
+      if (windowState.fullScreen) mainWindow.setFullScreen(false);
+      if (windowState.maximized) mainWindow.unmaximize();
+      mainWindow.setAlwaysOnTop(false);
+      mainWindow.setBounds(displayBounds, false);
+      mainWindow.setSkipTaskbar(true);
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      nativeState = await runDesktopHost('Attach', {
+        X: displayBounds.x,
+        Y: displayBounds.y,
+        Width: displayBounds.width,
+        Height: displayBounds.height
+      });
+      const status = await runDesktopHost('Status');
+      if (!nativeState.ok || !status.attached) throw new Error('Windows did not accept the wallpaper host window.');
+      desktopHostState = { ...nativeState, windowState };
+      desktopMode = true;
+      createDesktopTray();
+      notifyDesktopMode();
+      return desktopModeStatus();
+    } catch (error) {
+      if (nativeState?.ok) {
+        await runDesktopHost('Detach', {
+          OriginalStyle: nativeState.originalStyle,
+          OriginalExStyle: nativeState.originalExStyle,
+          OriginalParent: nativeState.originalParent
+        }).catch(() => {});
+      }
+      mainWindow.setSkipTaskbar(false);
+      mainWindow.setBounds(windowState.bounds, false);
+      if (windowState.maximized) mainWindow.maximize();
+      throw error;
+    }
+  }
+
+  const savedState = desktopHostState;
+  if (!savedState) throw new Error('Desktop window restore information is unavailable.');
+  await runDesktopHost('Detach', {
+    OriginalStyle: savedState.originalStyle,
+    OriginalExStyle: savedState.originalExStyle,
+    OriginalParent: savedState.originalParent
+  });
+  desktopMode = false;
+  desktopHostState = null;
+  destroyDesktopTray();
+  mainWindow.setSkipTaskbar(false);
+  mainWindow.setBounds(savedState.windowState.bounds, false);
+  if (savedState.windowState.fullScreen) mainWindow.setFullScreen(true);
+  else if (savedState.windowState.maximized) mainWindow.maximize();
+  mainWindow.show();
+  mainWindow.focus();
+  notifyDesktopMode();
+  return desktopModeStatus();
+}
+
+function setDesktopMode(enabled) {
+  if (desktopModeTransition) return desktopModeTransition;
+  desktopModeTransition = applyDesktopMode(enabled)
+    .catch((error) => {
+      notifyDesktopMode(error?.message || String(error));
+      throw error;
+    })
+    .finally(() => {
+      desktopModeTransition = null;
+    });
+  return desktopModeTransition;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1360,
@@ -79,7 +241,7 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
   mainWindow.once('ready-to-show', async () => {
-    const screenshotMode = process.argv.includes('--screenshot') || process.argv.includes('--screenshot-demo') || process.argv.includes('--screenshot-table') || process.argv.includes('--screenshot-markdown') || process.argv.includes('--screenshot-appearance') || process.argv.includes('--screenshot-app-icon') || process.argv.includes('--screenshot-swap') || process.argv.includes('--screenshot-minimap') || process.argv.includes('--screenshot-favorites') || process.argv.includes('--screenshot-title');
+    const screenshotMode = isScreenshotRun;
     if (screenshotMode) {
       if (process.argv.includes('--screenshot-demo')) {
         const samplePath = path.join(__dirname, '.artifacts', 'data-matrix.png');
@@ -424,6 +586,41 @@ function createWindow() {
         })()`);
         console.log('Matrix title editing smoke test:', titleResult);
       }
+      if (process.argv.includes('--screenshot-desktop')) {
+        mainWindow.showInactive();
+        await new Promise((resolve) => setTimeout(resolve, 180));
+        const originalBounds = mainWindow.getBounds();
+        const attached = await setDesktopMode(true);
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const attachedNativeStatus = await runDesktopHost('Status');
+        const attachedUiStatus = await mainWindow.webContents.executeJavaScript(`(() => ({
+          buttonActive: document.querySelector('#desktopModeBtn').classList.contains('active'),
+          buttonPressed: document.querySelector('#desktopModeBtn').getAttribute('aria-pressed'),
+          minimizeDisabled: document.querySelector('#minimizeBtn').disabled,
+          maximizeDisabled: document.querySelector('#maximizeBtn').disabled
+        }))()`);
+        const trayCreated = Boolean(desktopTray && !desktopTray.isDestroyed());
+        const restored = await setDesktopMode(false);
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const restoredNativeStatus = await runDesktopHost('Status');
+        const restoredBounds = mainWindow.getBounds();
+        const restoredUiStatus = await mainWindow.webContents.executeJavaScript(`(() => ({
+          buttonActive: document.querySelector('#desktopModeBtn').classList.contains('active'),
+          minimizeDisabled: document.querySelector('#minimizeBtn').disabled,
+          maximizeDisabled: document.querySelector('#maximizeBtn').disabled
+        }))()`);
+        console.log('Desktop wallpaper mode smoke test:', {
+          attached,
+          attachedNativeStatus,
+          attachedUiStatus,
+          trayCreated,
+          restored,
+          restoredNativeStatus,
+          restoredUiStatus,
+          boundsRestored: JSON.stringify(originalBounds) === JSON.stringify(restoredBounds),
+          trayDestroyed: !desktopTray
+        });
+      }
       mainWindow.showInactive();
       await new Promise((resolve) => setTimeout(resolve, 1400));
       const image = await mainWindow.webContents.capturePage();
@@ -438,6 +635,12 @@ function createWindow() {
 
   mainWindow.on('maximize', () => mainWindow.webContents.send('window:maximized', true));
   mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:maximized', false));
+  mainWindow.on('closed', () => {
+    destroyDesktopTray();
+    desktopMode = false;
+    desktopHostState = null;
+    mainWindow = null;
+  });
 }
 
 app.whenReady().then(() => {
@@ -480,9 +683,15 @@ app.whenReady().then(() => {
     }
   });
   ipcMain.handle('link:title', async (_event, url) => fetchPageTitle(url));
-  ipcMain.handle('window:minimize', () => mainWindow.minimize());
-  ipcMain.handle('window:maximize', () => mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize());
+  ipcMain.handle('window:minimize', () => {
+    if (!desktopMode) mainWindow.minimize();
+  });
+  ipcMain.handle('window:maximize', () => {
+    if (!desktopMode) mainWindow.isMaximized() ? mainWindow.unmaximize() : mainWindow.maximize();
+  });
   ipcMain.handle('window:close', () => mainWindow.close());
+  ipcMain.handle('window:desktop-mode-status', () => desktopModeStatus());
+  ipcMain.handle('window:desktop-mode', (_event, enabled) => setDesktopMode(Boolean(enabled)));
   createWindow();
 
   app.on('activate', () => {
