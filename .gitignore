@@ -1,0 +1,8 @@
+node_modules/
+.artifacts/
+*.log
+dist/
+out/
+release/
+.DS_Store
+Thumbs.db

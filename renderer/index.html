@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: file: http: https:; connect-src http: https:">
+  <title>数据矩阵</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="titlebar">
+    <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+    <span class="brand-name">数据矩阵</span>
+    <span class="save-state" id="saveState">已保存</span>
+    <div class="window-drag"></div>
+    <div class="window-controls">
+      <button class="icon-button" id="minimizeBtn" aria-label="最小化" title="最小化"><i data-lucide="minus"></i></button>
+      <button class="icon-button" id="maximizeBtn" aria-label="最大化" title="最大化"><i data-lucide="square"></i></button>
+      <button class="icon-button close-button" id="closeBtn" aria-label="关闭" title="关闭"><i data-lucide="x"></i></button>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-heading">
+        <span>矩阵空间</span>
+        <button class="icon-button subtle" id="newRootBtn" aria-label="新建矩阵" title="新建矩阵"><i data-lucide="plus"></i></button>
+      </div>
+      <nav class="matrix-tree" id="matrixTree" aria-label="矩阵列表"></nav>
+      <section class="favorites-section">
+        <div class="favorites-heading"><span>收藏</span><span id="favoritesCount">0</span></div>
+        <div class="favorites-list" id="favoritesList"></div>
+      </section>
+      <div class="sidebar-footer">
+        <div class="storage-line"><span></span>本地工作区</div>
+        <button class="theme-button" id="themeBtn"><i data-lucide="palette"></i><span>外观与色调</span><i data-lucide="chevron-right"></i></button>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <section class="workspace-header">
+        <nav class="breadcrumbs" id="breadcrumbs" aria-label="当前位置"></nav>
+        <div class="matrix-heading-row">
+          <div>
+            <input class="matrix-title" id="matrixTitle" aria-label="矩阵名称" maxlength="48">
+            <p class="matrix-meta" id="matrixMeta"></p>
+          </div>
+          <div class="toolbar">
+            <button class="tool-button" id="addRowBtn"><i data-lucide="rows-3"></i><span>添加行</span></button>
+            <button class="tool-button" id="addColBtn"><i data-lucide="columns-3"></i><span>添加列</span></button>
+            <button class="icon-button framed" id="moreBtn" aria-label="矩阵操作" title="矩阵操作"><i data-lucide="ellipsis"></i></button>
+          </div>
+        </div>
+      </section>
+
+      <section class="canvas" id="canvas">
+        <div class="grid-wrap" id="gridWrap">
+          <div class="matrix-grid" id="matrixGrid"></div>
+        </div>
+      </section>
+      <aside class="minimap" id="minimap" aria-label="矩阵小地图">
+        <div class="minimap-heading"><i data-lucide="map"></i><span>小地图</span></div>
+        <canvas id="minimapCanvas" aria-label="矩阵导航"></canvas>
+      </aside>
+    </main>
+  </div>
+
+  <aside class="theme-panel" id="themePanel" aria-hidden="true">
+    <div class="panel-heading">
+      <div><span class="eyebrow">个性化</span><h2>外观与色调</h2></div>
+      <button class="icon-button subtle" id="closeThemeBtn" aria-label="关闭外观面板"><i data-lucide="x"></i></button>
+    </div>
+    <div class="theme-section">
+      <label>界面模式</label>
+      <div class="segmented" id="modeControl">
+        <button data-mode="light">浅色</button><button data-mode="soft">柔和</button><button data-mode="dark">深色</button>
+      </div>
+    </div>
+    <div class="theme-section">
+      <label>主色调</label>
+      <div class="swatches" id="accentSwatches">
+        <button data-color="#2f7d68" aria-label="松绿"></button>
+        <button data-color="#476fbd" aria-label="钴蓝"></button>
+        <button data-color="#d05e43" aria-label="珊瑚"></button>
+        <button data-color="#a56b2a" aria-label="琥珀"></button>
+        <button data-color="#7b5daa" aria-label="鸢尾"></button>
+        <label class="custom-swatch" aria-label="自定义主色"><i data-lucide="pipette"></i><input type="color" id="customAccent" value="#2f7d68"></label>
+      </div>
+    </div>
+    <div class="theme-section">
+      <label>单元格色彩</label>
+      <div class="segmented" id="cellColorModeControl">
+        <button data-cell-color-mode="type">类型</button><button data-cell-color-mode="cascade">级联</button><button data-cell-color-mode="accent">单色</button>
+      </div>
+    </div>
+    <div class="theme-preview"><span></span><span></span><span></span><span></span></div>
+  </aside>
+  <div class="scrim" id="scrim"></div>
+
+  <div class="popover" id="addPopover" hidden>
+    <button data-action="text"><i data-lucide="type"></i><span><b>自定义数据</b></span></button>
+    <button data-action="markdown"><i data-lucide="file-text"></i><span><b>Markdown</b></span></button>
+    <button data-action="table"><i data-lucide="table-2"></i><span><b>数据表</b></span></button>
+    <button data-action="file"><i data-lucide="folder-open"></i><span><b>文件或应用</b></span></button>
+    <button data-action="link"><i data-lucide="globe-2"></i><span><b>嵌入网页</b></span></button>
+    <button data-action="matrix"><i data-lucide="grid-2x2-plus"></i><span><b>嵌套矩阵</b></span></button>
+  </div>
+
+  <div class="popover compact" id="cellMenu" hidden>
+    <button data-action="edit"><i data-lucide="pencil"></i><span>编辑</span></button>
+    <button data-action="favorite" id="favoriteCellAction"><i data-lucide="star"></i><span>收藏</span></button>
+    <button data-action="appearance"><i data-lucide="palette"></i><span>颜色与表情</span></button>
+    <button data-action="clear" class="danger"><i data-lucide="trash-2"></i><span>清空</span></button>
+  </div>
+
+  <div class="popover compact" id="matrixMenu" hidden>
+    <button data-action="rename"><i data-lucide="pencil"></i><span>重命名</span></button>
+    <button data-action="favorite" id="favoriteMatrixAction"><i data-lucide="star"></i><span>收藏矩阵</span></button>
+    <button data-action="clear"><i data-lucide="eraser"></i><span>清空矩阵</span></button>
+    <button data-action="delete" class="danger"><i data-lucide="trash-2"></i><span>删除矩阵</span></button>
+  </div>
+
+  <div class="popover compact matrix-context-menu" id="matrixContextMenu" hidden>
+    <button data-matrix-context-action="open"><i data-lucide="arrow-right"></i><span>打开矩阵</span></button>
+    <button data-matrix-context-action="rename"><i data-lucide="pencil"></i><span>重命名</span></button>
+    <button data-matrix-context-action="appearance"><i data-lucide="palette"></i><span>颜色与图标</span></button>
+    <button data-matrix-context-action="favorite" id="contextFavoriteMatrixAction"><i data-lucide="star"></i><span>收藏矩阵</span></button>
+    <button data-matrix-context-action="toggle" id="contextToggleMatrixAction"><i data-lucide="chevrons-up-down"></i><span>折叠子矩阵</span></button>
+    <div class="popover-separator"></div>
+    <button data-matrix-context-action="delete" class="danger"><i data-lucide="trash-2"></i><span>删除矩阵</span></button>
+  </div>
+
+  <dialog class="editor-dialog" id="editorDialog">
+    <form method="dialog" id="editorForm">
+      <div class="dialog-heading"><div><span class="eyebrow" id="editorEyebrow">自定义数据</span><h2 id="editorTitle">编辑单元格</h2></div><button class="icon-button subtle" type="button" data-dialog-close aria-label="关闭"><i data-lucide="x"></i></button></div>
+      <label class="field"><span>标题</span><input id="cellTitleInput" maxlength="80" autocomplete="off"></label>
+      <label class="field" id="valueField"><span id="valueLabel">内容</span><textarea id="cellValueInput" rows="5" maxlength="2000"></textarea></label>
+      <p class="field-hint" id="editorHint"></p>
+      <div class="dialog-actions"><button class="button-secondary" type="button" data-dialog-close>取消</button><button class="button-primary" type="submit" id="saveCellBtn">保存</button></div>
+    </form>
+  </dialog>
+
+  <dialog class="table-dialog" id="tableDialog">
+    <form id="tableForm">
+      <div class="dialog-heading table-dialog-heading">
+        <div><span class="eyebrow">结构化数据</span><h2>编辑数据表</h2></div>
+        <button class="icon-button subtle" type="button" data-table-close aria-label="关闭"><i data-lucide="x"></i></button>
+      </div>
+      <div class="table-title-row">
+        <label class="field table-title-field"><span>数据表名称</span><input id="tableTitleInput" maxlength="80" autocomplete="off"></label>
+        <div class="table-summary" id="tableSummary"></div>
+        <div class="table-tools">
+          <button class="tool-button" type="button" id="addTableColumnBtn"><i data-lucide="columns-3"></i><span>添加列</span></button>
+          <button class="tool-button" type="button" id="addTableRowBtn"><i data-lucide="rows-3"></i><span>添加行</span></button>
+        </div>
+      </div>
+      <div class="table-scroll" id="tableGrid"></div>
+      <div class="dialog-actions table-dialog-actions">
+        <button class="button-secondary" type="button" data-table-close>取消</button>
+        <button class="button-primary" type="submit">保存数据表</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="markdown-dialog" id="markdownDialog">
+    <form id="markdownForm">
+      <div class="dialog-heading markdown-dialog-heading">
+        <div><span class="eyebrow">Markdown</span><h2>编辑文档</h2></div>
+        <button class="icon-button subtle" type="button" data-markdown-close aria-label="关闭"><i data-lucide="x"></i></button>
+      </div>
+      <div class="markdown-title-row">
+        <label class="field markdown-title-field"><span>文档名称</span><input id="markdownTitleInput" maxlength="80" autocomplete="off"></label>
+        <span class="markdown-stats" id="markdownStats"></span>
+      </div>
+      <div class="markdown-workbench">
+        <section class="markdown-pane source-pane">
+          <div class="pane-heading"><i data-lucide="code-2"></i><span>Markdown</span></div>
+          <textarea id="markdownInput" spellcheck="false" aria-label="Markdown 内容"></textarea>
+        </section>
+        <section class="markdown-pane preview-pane">
+          <div class="pane-heading"><i data-lucide="eye"></i><span>预览</span></div>
+          <article class="markdown-body" id="markdownPreview"></article>
+        </section>
+      </div>
+      <div class="dialog-actions markdown-dialog-actions">
+        <button class="button-secondary" type="button" data-markdown-close>取消</button>
+        <button class="button-primary" type="submit">保存文档</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="appearance-dialog" id="appearanceDialog">
+    <form id="appearanceForm">
+      <div class="dialog-heading">
+        <div><span class="eyebrow">单元格外观</span><h2>颜色与表情</h2></div>
+        <button class="icon-button subtle" type="button" data-appearance-close aria-label="关闭"><i data-lucide="x"></i></button>
+      </div>
+      <div class="appearance-preview" id="appearancePreview">
+        <span class="appearance-preview-icon" id="appearancePreviewIcon">◇</span>
+        <div><strong id="appearancePreviewTitle"></strong><small>单元格预览</small></div>
+      </div>
+      <section class="appearance-section">
+        <label>自定义颜色</label>
+        <div class="cell-color-swatches" id="cellColorSwatches">
+          <button data-cell-color="" aria-label="使用类型颜色" title="使用类型颜色"><i data-lucide="slash"></i></button>
+          <button data-cell-color="#2f7d68" aria-label="松绿"></button>
+          <button data-cell-color="#476fbd" aria-label="钴蓝"></button>
+          <button data-cell-color="#d05e43" aria-label="珊瑚"></button>
+          <button data-cell-color="#a56b2a" aria-label="琥珀"></button>
+          <button data-cell-color="#7b5daa" aria-label="鸢尾"></button>
+          <button data-cell-color="#c04867" aria-label="玫红"></button>
+          <button data-cell-color="#25819b" aria-label="湖蓝"></button>
+          <button data-cell-color="#6b7556" aria-label="橄榄"></button>
+          <label class="cell-custom-color" aria-label="自定义颜色" title="自定义颜色"><i data-lucide="pipette"></i><input type="color" id="customCellColor" value="#2f7d68"></label>
+        </div>
+      </section>
+      <section class="appearance-section">
+        <label>选择表情</label>
+        <div class="emoji-grid" id="emojiGrid">
+          <button data-cell-emoji="" aria-label="不使用表情" title="不使用表情"><i data-lucide="x"></i></button>
+          <button data-cell-emoji="💡" aria-label="灯泡">💡</button>
+          <button data-cell-emoji="⭐" aria-label="星星">⭐</button>
+          <button data-cell-emoji="✅" aria-label="完成">✅</button>
+          <button data-cell-emoji="🔥" aria-label="火焰">🔥</button>
+          <button data-cell-emoji="📌" aria-label="图钉">📌</button>
+          <button data-cell-emoji="🚀" aria-label="火箭">🚀</button>
+          <button data-cell-emoji="🎯" aria-label="目标">🎯</button>
+          <button data-cell-emoji="📊" aria-label="图表">📊</button>
+          <button data-cell-emoji="📁" aria-label="文件夹">📁</button>
+          <button data-cell-emoji="🔗" aria-label="链接">🔗</button>
+          <button data-cell-emoji="📝" aria-label="笔记">📝</button>
+          <button data-cell-emoji="🧠" aria-label="想法">🧠</button>
+          <button data-cell-emoji="💻" aria-label="电脑">💻</button>
+          <button data-cell-emoji="📅" aria-label="日期">📅</button>
+          <button data-cell-emoji="🔔" aria-label="提醒">🔔</button>
+          <button data-cell-emoji="⚡" aria-label="闪电">⚡</button>
+          <button data-cell-emoji="❤️" aria-label="爱心">❤️</button>
+          <button data-cell-emoji="🔒" aria-label="锁定">🔒</button>
+          <button data-cell-emoji="🏠" aria-label="主页">🏠</button>
+          <button data-cell-emoji="🛠️" aria-label="工具">🛠️</button>
+        </div>
+      </section>
+      <div class="dialog-actions">
+        <button class="button-secondary" type="button" data-appearance-close>取消</button>
+        <button class="button-primary" type="submit">应用外观</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="appearance-dialog matrix-appearance-dialog" id="matrixAppearanceDialog">
+    <form id="matrixAppearanceForm">
+      <div class="dialog-heading">
+        <div><span class="eyebrow">矩阵外观</span><h2>颜色与图标</h2></div>
+        <button class="icon-button subtle" type="button" data-matrix-appearance-close aria-label="关闭"><i data-lucide="x"></i></button>
+      </div>
+      <div class="appearance-preview" id="matrixAppearancePreview">
+        <span class="appearance-preview-icon matrix-preview-icon" id="matrixAppearancePreviewIcon"><i data-lucide="panels-top-left"></i></span>
+        <div><strong id="matrixAppearancePreviewTitle"></strong><small>矩阵预览</small></div>
+      </div>
+      <section class="appearance-section">
+        <label>矩阵颜色</label>
+        <div class="cell-color-swatches" id="matrixColorSwatches">
+          <button data-matrix-color="" aria-label="使用默认颜色" title="使用默认颜色"><i data-lucide="slash"></i></button>
+          <button data-matrix-color="#2f7d68" aria-label="松绿"></button>
+          <button data-matrix-color="#476fbd" aria-label="钴蓝"></button>
+          <button data-matrix-color="#d05e43" aria-label="珊瑚"></button>
+          <button data-matrix-color="#a56b2a" aria-label="琥珀"></button>
+          <button data-matrix-color="#7b5daa" aria-label="鸢尾"></button>
+          <button data-matrix-color="#c04867" aria-label="玫红"></button>
+          <button data-matrix-color="#25819b" aria-label="湖蓝"></button>
+          <button data-matrix-color="#6b7556" aria-label="橄榄"></button>
+          <label class="cell-custom-color matrix-custom-color" aria-label="自定义矩阵颜色" title="自定义颜色"><i data-lucide="pipette"></i><input type="color" id="customMatrixColor" value="#2f7d68"></label>
+        </div>
+      </section>
+      <section class="appearance-section">
+        <label>矩阵图标</label>
+        <div class="matrix-icon-grid" id="matrixIconGrid">
+          <button data-matrix-icon="" aria-label="默认图标" title="默认图标"><i data-lucide="panels-top-left"></i></button>
+          <button data-matrix-icon="folder" aria-label="文件夹"><i data-lucide="folder"></i></button>
+          <button data-matrix-icon="database" aria-label="数据库"><i data-lucide="database"></i></button>
+          <button data-matrix-icon="briefcase-business" aria-label="项目"><i data-lucide="briefcase-business"></i></button>
+          <button data-matrix-icon="code-2" aria-label="代码"><i data-lucide="code-2"></i></button>
+          <button data-matrix-icon="image" aria-label="图片"><i data-lucide="image"></i></button>
+          <button data-matrix-icon="music" aria-label="音乐"><i data-lucide="music"></i></button>
+          <button data-matrix-icon="calendar-days" aria-label="日历"><i data-lucide="calendar-days"></i></button>
+          <button data-matrix-icon="book-open" aria-label="资料"><i data-lucide="book-open"></i></button>
+          <button data-matrix-icon="target" aria-label="目标"><i data-lucide="target"></i></button>
+          <button data-matrix-icon="lightbulb" aria-label="灵感"><i data-lucide="lightbulb"></i></button>
+          <button data-matrix-icon="rocket" aria-label="启动"><i data-lucide="rocket"></i></button>
+          <button data-matrix-icon="archive" aria-label="归档"><i data-lucide="archive"></i></button>
+          <button data-matrix-icon="palette" aria-label="设计"><i data-lucide="palette"></i></button>
+        </div>
+      </section>
+      <div class="dialog-actions">
+        <button class="button-secondary" type="button" data-matrix-appearance-close>取消</button>
+        <button class="button-primary" type="submit">应用矩阵外观</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+  <script src="../node_modules/lucide/dist/umd/lucide.js"></script>
+  <script src="../node_modules/marked/lib/marked.umd.js"></script>
+  <script src="../node_modules/dompurify/dist/purify.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
