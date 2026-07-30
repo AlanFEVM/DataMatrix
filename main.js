@@ -4,7 +4,7 @@ const path = require('node:path');
 
 let mainWindow;
 
-const screenshotFlags = ['--screenshot', '--screenshot-demo', '--screenshot-table', '--screenshot-markdown', '--screenshot-appearance', '--screenshot-app-icon', '--screenshot-swap', '--screenshot-minimap', '--screenshot-favorites', '--screenshot-title'];
+const screenshotFlags = ['--screenshot', '--screenshot-demo', '--screenshot-table', '--screenshot-markdown', '--screenshot-appearance', '--screenshot-app-icon', '--screenshot-automation', '--screenshot-swap', '--screenshot-minimap', '--screenshot-favorites', '--screenshot-title'];
 const isScreenshotRun = process.argv.some((argument) => screenshotFlags.includes(argument));
 const testArtifacts = app.isPackaged ? path.join(app.getPath('temp'), 'DataMatrix-electron-test') : path.join(__dirname, '.artifacts');
 if (isScreenshotRun) app.setPath('userData', path.join(testArtifacts, 'electron-test-profile'));
@@ -62,6 +62,30 @@ async function fetchPageTitle(rawUrl) {
   }
 }
 
+function expandWindowsEnvironmentPath(filePath) {
+  return filePath.replace(/%([^%]+)%/g, (match, name) => process.env[name] || match);
+}
+
+async function getFileIconDataUrl(filePath) {
+  const candidates = [];
+  if (process.platform === 'win32' && path.extname(filePath).toLowerCase() === '.lnk') {
+    try {
+      const shortcut = shell.readShortcutLink(filePath);
+      if (shortcut.icon) candidates.push(expandWindowsEnvironmentPath(shortcut.icon));
+      if (shortcut.target) candidates.push(expandWindowsEnvironmentPath(shortcut.target));
+    } catch {}
+  }
+  candidates.push(filePath);
+
+  for (const candidate of [...new Set(candidates.filter(Boolean))]) {
+    try {
+      const icon = await app.getFileIcon(candidate, { size: 'large' });
+      if (!icon.isEmpty()) return icon.toDataURL();
+    } catch {}
+  }
+  return null;
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1360,
@@ -83,6 +107,15 @@ function createWindow() {
   mainWindow.once('ready-to-show', async () => {
     const screenshotMode = isScreenshotRun;
     if (screenshotMode) {
+      await mainWindow.webContents.executeJavaScript(`new Promise((resolve, reject) => {
+        const startedAt = Date.now();
+        const check = () => {
+          if (typeof state !== 'undefined' && state?.matrices) return resolve(true);
+          if (Date.now() - startedAt > 5000) return reject(new Error('Renderer initialization timed out'));
+          setTimeout(check, 25);
+        };
+        check();
+      })`);
       if (process.argv.includes('--screenshot-demo')) {
         const samplePath = path.join(testArtifacts, 'data-matrix.png');
         await mainWindow.webContents.executeJavaScript(`
@@ -155,6 +188,56 @@ function createWindow() {
           return { loaded: iconImage?.closest('.cell-icon')?.classList.contains('has-system-icon') || false, dataUrl: iconImage?.src?.startsWith('data:image/png') || false, naturalWidth: iconImage?.naturalWidth || 0 };
         })()`);
         console.log('Associated file icon smoke test:', appIconResult);
+      }
+      if (process.argv.includes('--screenshot-automation')) {
+        await fs.mkdir(testArtifacts, { recursive: true });
+        const shortcutPath = path.join(testArtifacts, 'DataMatrix Test.lnk');
+        const systemAppPath = process.platform === 'win32'
+          ? path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'notepad.exe')
+          : process.execPath;
+        await fs.rm(shortcutPath, { force: true });
+        const shortcutCreated = process.platform === 'win32' && shell.writeShortcutLink(shortcutPath, {
+          target: systemAppPath,
+          cwd: path.dirname(systemAppPath),
+          icon: systemAppPath,
+          iconIndex: 0,
+          description: 'DataMatrix shortcut icon test'
+        });
+        const automationPath = shortcutCreated ? shortcutPath : process.execPath;
+        const automationResult = await mainWindow.webContents.executeJavaScript(`(async () => {
+          activeMatrix().rows = 3;
+          activeMatrix().cols = 4;
+          activeMatrix().cells = {};
+          render();
+          resetHistory();
+          assignFiles([${JSON.stringify(automationPath)}], 0, 0);
+          await new Promise((resolve) => setTimeout(resolve, 900));
+          const card = document.querySelector('.matrix-cell[data-row="0"][data-col="0"]');
+          const iconImage = card?.querySelector('[data-app-icon]');
+          const iconLoaded = iconImage?.closest('.cell-icon')?.classList.contains('has-system-icon') || false;
+          const adaptiveColor = card?.classList.contains('has-adaptive-color') && Boolean(getComputedStyle(card).getPropertyValue('--app-color').trim());
+          const shortcutTitle = activeMatrix().cells['0:0']?.title;
+          const rowsBefore = activeMatrix().rows;
+          document.querySelector('#addRowBtn').click();
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true }));
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          const undoRestoredRows = activeMatrix().rows === rowsBefore;
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'y', code: 'KeyY', ctrlKey: true, bubbles: true }));
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          const redoRestoredRows = activeMatrix().rows === rowsBefore + 1;
+          document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true }));
+          await new Promise((resolve) => setTimeout(resolve, 80));
+          return {
+            shortcutCreated: ${JSON.stringify(Boolean(shortcutCreated))},
+            shortcutTitle,
+            iconLoaded,
+            adaptiveColor,
+            undoRestoredRows,
+            redoRestoredRows,
+            finalRowsRestored: activeMatrix().rows === rowsBefore
+          };
+        })()`);
+        console.log('Shortcut, adaptive color, and undo smoke test:', automationResult);
       }
       if (process.argv.includes('--screenshot-swap')) {
         mainWindow.showInactive();
@@ -478,12 +561,7 @@ app.whenReady().then(() => {
   });
   ipcMain.handle('file:icon', async (_event, filePath) => {
     if (typeof filePath !== 'string' || !filePath) return null;
-    try {
-      const icon = await app.getFileIcon(filePath, { size: 'large' });
-      return icon.isEmpty() ? null : icon.toDataURL();
-    } catch {
-      return null;
-    }
+    return getFileIconDataUrl(filePath);
   });
   ipcMain.handle('link:open', async (_event, url) => {
     try {

@@ -74,6 +74,13 @@ let minimapMetrics = null;
 let minimapFrame = null;
 const thumbnailCache = new Map();
 const appIconCache = new Map();
+const adaptiveColorCache = new Map();
+const undoHistory = [];
+const redoHistory = [];
+const HISTORY_LIMIT = 80;
+let historyBaseline = null;
+let historyGroup = null;
+let historyGroupTime = 0;
 
 const TABLE_TYPES = {
   text: { label: '文本', input: 'text' },
@@ -145,12 +152,80 @@ function activeMatrix() {
   return state.matrices[state.activeMatrixId];
 }
 
-function touch(matrix = activeMatrix()) {
-  matrix.updatedAt = Date.now();
-  scheduleSave();
+function workspaceSnapshot() {
+  return structuredClone(state);
 }
 
-function scheduleSave() {
+function resetHistory() {
+  undoHistory.length = 0;
+  redoHistory.length = 0;
+  historyBaseline = workspaceSnapshot();
+  historyGroup = null;
+  historyGroupTime = 0;
+}
+
+function trackWorkspaceChange({ history = false, group = null } = {}) {
+  const next = workspaceSnapshot();
+  if (!historyBaseline) {
+    historyBaseline = next;
+    return;
+  }
+  if (JSON.stringify(next) === JSON.stringify(historyBaseline)) return;
+
+  const now = Date.now();
+  const grouped = history && group && group === historyGroup && now - historyGroupTime < 900;
+  if (history && !grouped) {
+    undoHistory.push(historyBaseline);
+    if (undoHistory.length > HISTORY_LIMIT) undoHistory.shift();
+    redoHistory.length = 0;
+  }
+  historyBaseline = next;
+  historyGroup = history ? group : null;
+  historyGroupTime = now;
+}
+
+function restoreWorkspace(snapshot) {
+  const currentSettings = structuredClone(state.settings);
+  const currentMatrixId = state.activeMatrixId;
+  state = normalizeState(structuredClone(snapshot));
+  state.settings = { ...state.settings, ...currentSettings };
+  state.settings.collapsedMatrices = state.settings.collapsedMatrices.filter((id) => state.matrices[id]);
+  if (state.matrices[currentMatrixId]) state.activeMatrixId = currentMatrixId;
+}
+
+function undoWorkspace() {
+  const previous = undoHistory.pop();
+  if (!previous) return toast('没有可撤销的操作');
+  redoHistory.push(workspaceSnapshot());
+  if (redoHistory.length > HISTORY_LIMIT) redoHistory.shift();
+  restoreWorkspace(previous);
+  historyBaseline = workspaceSnapshot();
+  historyGroup = null;
+  scheduleSave();
+  render();
+  toast('已撤销上一步操作');
+}
+
+function redoWorkspace() {
+  const next = redoHistory.pop();
+  if (!next) return toast('没有可重做的操作');
+  undoHistory.push(workspaceSnapshot());
+  if (undoHistory.length > HISTORY_LIMIT) undoHistory.shift();
+  restoreWorkspace(next);
+  historyBaseline = workspaceSnapshot();
+  historyGroup = null;
+  scheduleSave();
+  render();
+  toast('已重做上一步操作');
+}
+
+function touch(matrix = activeMatrix(), historyGroupKey = null) {
+  matrix.updatedAt = Date.now();
+  scheduleSave({ history: true, group: historyGroupKey });
+}
+
+function scheduleSave(historyOptions = {}) {
+  trackWorkspaceChange(historyOptions);
   clearTimeout(saveTimer);
   clearTimeout(saveFeedbackTimer);
   elements.saveState.textContent = '正在保存…';
@@ -191,6 +266,11 @@ function fileName(filePath) {
   return filePath.split(/[\\/]/).filter(Boolean).pop() || filePath;
 }
 
+function fileDisplayName(filePath) {
+  const name = fileName(filePath);
+  return /\.(lnk|url)$/i.test(name) ? name.replace(/\.(lnk|url)$/i, '') : name;
+}
+
 function fileExtension(filePath) {
   const name = fileName(filePath);
   const index = name.lastIndexOf('.');
@@ -199,7 +279,7 @@ function fileExtension(filePath) {
 
 function fileIcon(filePath) {
   const ext = fileExtension(filePath).toLowerCase();
-  if (['exe', 'app', 'msi', 'bat', 'cmd', 'lnk'].includes(ext)) return 'app-window';
+  if (['exe', 'app', 'msi', 'bat', 'cmd', 'lnk', 'url'].includes(ext)) return 'app-window';
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) return 'image';
   if (['xls', 'xlsx', 'csv'].includes(ext)) return 'sheet';
   if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'archive';
@@ -210,7 +290,7 @@ function fileIcon(filePath) {
 }
 
 function isApplicationFile(filePath) {
-  return ['exe', 'app', 'msi', 'bat', 'cmd', 'lnk'].includes(fileExtension(filePath).toLowerCase());
+  return ['exe', 'app', 'msi', 'bat', 'cmd', 'lnk', 'url'].includes(fileExtension(filePath).toLowerCase());
 }
 
 function isImageFile(filePath) {
@@ -338,7 +418,7 @@ function toggleMatrixFavorite(matrixId) {
     state.matrixFavorites.push(matrixId);
     toast('矩阵已添加到收藏栏');
   }
-  scheduleSave();
+  scheduleSave({ history: true });
   renderTree();
   renderFavorites();
   syncMatrixFavoriteAction(matrixId);
@@ -400,7 +480,7 @@ function toggleFavorite(cell) {
     state.favorites.push(cell.id);
     toast('已添加到收藏栏');
   }
-  scheduleSave();
+  scheduleSave({ history: true });
   renderFavorites();
   syncFavoriteAction(cell);
   refreshIcons();
@@ -452,7 +532,7 @@ function cellMarkup(cell) {
   let preview = '';
   if (cell.type === 'file') {
     icon = fileIcon(cell.value);
-    subtitle = fileExtension(cell.value);
+    subtitle = /\.(lnk|url)$/i.test(cell.value) ? '快捷方式' : fileExtension(cell.value);
   } else if (cell.type === 'link') {
     icon = 'globe-2';
     try { subtitle = new URL(cell.value).hostname; } catch { subtitle = '网页链接'; }
@@ -489,7 +569,8 @@ function renderGrid() {
     for (let col = 0; col < matrix.cols; col += 1) {
       const cell = matrix.cells[cellKey(row, col)];
       const matrixColor = cell?.type === 'matrix' && validCellColor(state.matrices[cell.matrixId]?.appearance?.color);
-      const classes = cell ? `cell-type-${cell.type}${cell.type === 'file' && isImageFile(cell.value) ? ' has-thumbnail' : ''}${validCellColor(cell.appearance?.color) ? ' has-custom-color' : ''}${matrixColor ? ' has-matrix-color' : ''}` : 'empty';
+      const adaptiveColor = cell?.type === 'file' && isApplicationFile(cell.value) ? adaptiveColorCache.get(cell.value) : '';
+      const classes = cell ? `cell-type-${cell.type}${cell.type === 'file' && isImageFile(cell.value) ? ' has-thumbnail' : ''}${validCellColor(cell.appearance?.color) ? ' has-custom-color' : ''}${matrixColor ? ' has-matrix-color' : ''}${adaptiveColor ? ' has-adaptive-color' : ''}` : 'empty';
       const label = cell ? `${cell.title || '未命名单元格'}，双击打开` : '空单元格，点击添加数据';
       cells.push(`<article class="matrix-cell ${classes}" data-row="${row}" data-col="${col}" aria-label="${escapeHtml(label)}" tabindex="0" style="animation-delay:${Math.min((row * matrix.cols + col) * 16, 180)}ms">${cellMarkup(cell)}</article>`);
     }
@@ -554,6 +635,10 @@ function cellDisplayColor(cell, row, col, cols = activeMatrix().cols) {
   if (cell.type === 'matrix') {
     const matrixColor = state.matrices[cell.matrixId]?.appearance?.color;
     if (validCellColor(matrixColor)) return matrixColor;
+  }
+  if (state.settings.cellColorMode === 'type' && cell.type === 'file' && isApplicationFile(cell.value)) {
+    const adaptiveColor = adaptiveColorCache.get(cell.value);
+    if (adaptiveColor) return adaptiveColor;
   }
   if (state.settings.cellColorMode === 'cascade') return cascadeCellColor(row, col, cols);
   if (state.settings.cellColorMode === 'accent') return themeColor('--accent');
@@ -660,6 +745,11 @@ function applyCellAppearances() {
     if (cell?.type === 'matrix') {
       const nestedColor = state.matrices[cell.matrixId]?.appearance?.color;
       if (validCellColor(nestedColor)) cellElement.style.setProperty('--matrix-color', nestedColor);
+    }
+    const adaptiveColor = cell?.type === 'file' && isApplicationFile(cell.value) ? adaptiveColorCache.get(cell.value) : '';
+    if (adaptiveColor) {
+      cellElement.classList.add('has-adaptive-color');
+      cellElement.style.setProperty('--app-color', adaptiveColor);
     }
     if (cell) cellElement.style.setProperty('--cascade-color', cascadeCellColor(row, col, matrix.cols));
   });
@@ -847,6 +937,55 @@ function hydrateThumbnails() {
   });
 }
 
+function extractIconColor(image) {
+  try {
+    const canvas = document.createElement('canvas');
+    const size = 48;
+    canvas.width = size;
+    canvas.height = size;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    context.drawImage(image, 0, 0, size, size);
+    const pixels = context.getImageData(0, 0, size, size).data;
+    const buckets = Array.from({ length: 18 }, () => ({ red: 0, green: 0, blue: 0, weight: 0 }));
+
+    for (let index = 0; index < pixels.length; index += 4) {
+      const alpha = pixels[index + 3] / 255;
+      if (alpha < .32) continue;
+      const red = pixels[index] / 255;
+      const green = pixels[index + 1] / 255;
+      const blue = pixels[index + 2] / 255;
+      const max = Math.max(red, green, blue);
+      const min = Math.min(red, green, blue);
+      const delta = max - min;
+      const lightness = (max + min) / 2;
+      const saturation = delta ? delta / (1 - Math.abs(2 * lightness - 1)) : 0;
+      if (saturation < .18 || lightness < .08 || lightness > .94) continue;
+      let hue = 0;
+      if (max === red) hue = ((green - blue) / delta) % 6;
+      else if (max === green) hue = (blue - red) / delta + 2;
+      else hue = (red - green) / delta + 4;
+      hue = (hue * 60 + 360) % 360;
+      const weight = alpha * (.25 + saturation) * (.55 + delta);
+      const bucket = buckets[Math.floor(hue / 20) % buckets.length];
+      bucket.red += red * weight;
+      bucket.green += green * weight;
+      bucket.blue += blue * weight;
+      bucket.weight += weight;
+    }
+
+    const selected = buckets.sort((left, right) => right.weight - left.weight)[0];
+    if (!selected.weight) return null;
+    const red = Math.round(selected.red / selected.weight * 255);
+    const green = Math.round(selected.green / selected.weight * 255);
+    const blue = Math.round(selected.blue / selected.weight * 255);
+    const raw = `#${[red, green, blue].map((value) => value.toString(16).padStart(2, '0')).join('')}`;
+    const { h, s, l } = hexToHsl(raw);
+    return `hsl(${Math.round(h)} ${Math.round(Math.max(45, Math.min(78, s)))}% ${Math.round(Math.max(38, Math.min(54, l)))}%)`;
+  } catch {
+    return null;
+  }
+}
+
 function hydrateAppIcons() {
   elements.grid.querySelectorAll('[data-app-icon]').forEach(async (image) => {
     const filePath = decodeURIComponent(image.dataset.appIcon);
@@ -855,7 +994,18 @@ function hydrateAppIcons() {
     }
     const dataUrl = await appIconCache.get(filePath);
     if (!dataUrl || !image.isConnected || decodeURIComponent(image.dataset.appIcon) !== filePath) return;
-    image.addEventListener('load', () => image.closest('.cell-icon')?.classList.add('has-system-icon'), { once: true });
+    image.addEventListener('load', () => {
+      image.closest('.cell-icon')?.classList.add('has-system-icon');
+      if (!isApplicationFile(filePath)) return;
+      if (!adaptiveColorCache.has(filePath)) adaptiveColorCache.set(filePath, extractIconColor(image));
+      const color = adaptiveColorCache.get(filePath);
+      const card = image.closest('.matrix-cell');
+      if (color && card) {
+        card.classList.add('has-adaptive-color');
+        card.style.setProperty('--app-color', color);
+        scheduleMinimapDraw();
+      }
+    }, { once: true });
     image.src = dataUrl;
   });
 }
@@ -1086,7 +1236,7 @@ async function saveEditor() {
     if (!title && !value) return toast('请填写标题或内容', true);
     matrix.cells[key] = { id: existing?.id || uid(), ...existing, type: 'text', title: title || '自定义数据', value };
   } else if (type === 'file') {
-    matrix.cells[key] = { ...existing, title: title || fileName(existing.value) };
+    matrix.cells[key] = { ...existing, title: title || fileDisplayName(existing.value) };
   } else if (type === 'matrix') {
     const nested = state.matrices[existing.matrixId];
     if (!nested) return toast('这个嵌套矩阵已不存在', true);
@@ -1166,7 +1316,7 @@ function assignFiles(paths, startRow, startCol) {
     const row = Math.floor(index / matrix.cols);
     const col = index % matrix.cols;
     if (row >= matrix.rows) matrix.rows = row + 1;
-    matrix.cells[cellKey(row, col)] = { id: uid(), type: 'file', title: fileName(filePath), value: filePath };
+    matrix.cells[cellKey(row, col)] = { id: uid(), type: 'file', title: fileDisplayName(filePath), value: filePath };
     index += 1;
   });
   touch(matrix);
@@ -1238,11 +1388,11 @@ function requestDeleteMatrix(matrixId) {
     toast('至少需要保留一个矩阵', true);
     return false;
   }
-  if (!confirm(`删除“${matrix.title}”及其所有嵌套矩阵？此操作无法撤销。`)) return false;
+  if (!confirm(`删除“${matrix.title}”及其所有嵌套矩阵？`)) return false;
   const activeWillBeDeleted = pathToMatrix(state.activeMatrixId).some((item) => item.id === matrixId);
   removeMatrix(matrixId);
   if (activeWillBeDeleted || !state.matrices[state.activeMatrixId]) state.activeMatrixId = nextId;
-  scheduleSave();
+  scheduleSave({ history: true });
   render();
   return true;
 }
@@ -1375,7 +1525,7 @@ elements.favoritesList.addEventListener('click', async (event) => {
   const matrixRemoveButton = event.target.closest('[data-matrix-favorite-remove]');
   if (matrixRemoveButton) {
     removeMatrixFavorite(matrixRemoveButton.dataset.matrixFavoriteRemove);
-    scheduleSave();
+    scheduleSave({ history: true });
     renderTree();
     renderFavorites();
     refreshIcons();
@@ -1385,7 +1535,7 @@ elements.favoritesList.addEventListener('click', async (event) => {
   const removeButton = event.target.closest('[data-favorite-remove]');
   if (removeButton) {
     removeFavorite(removeButton.dataset.favoriteRemove);
-    scheduleSave();
+    scheduleSave({ history: true });
     renderFavorites();
     refreshIcons();
     toast('已取消收藏');
@@ -1892,7 +2042,7 @@ elements.title.addEventListener('input', () => {
       if (cell?.type === 'matrix' && cell.matrixId === matrix.id) cell.title = matrix.title;
     });
   });
-  touch(matrix);
+  touch(matrix, `matrix-title:${matrix.id}`);
   renderTree();
   renderFavorites();
   renderBreadcrumbsOnly();
@@ -1901,8 +2051,17 @@ elements.title.addEventListener('input', () => {
 
 elements.title.addEventListener('blur', () => {
   if (!elements.title.value.trim()) {
-    activeMatrix().title = '未命名矩阵';
+    const matrix = activeMatrix();
+    matrix.title = '未命名矩阵';
+    Object.values(state.matrices).forEach((candidate) => {
+      Object.values(candidate.cells).forEach((cell) => {
+        if (cell?.type === 'matrix' && cell.matrixId === matrix.id) cell.title = matrix.title;
+      });
+    });
+    touch(matrix, `matrix-title:${matrix.id}`);
     renderHeader();
+    renderTree();
+    renderFavorites();
     refreshIcons();
   }
 });
@@ -1934,7 +2093,7 @@ $('#newRootBtn').addEventListener('click', () => {
   const matrix = createMatrix(`新矩阵 ${Object.keys(state.matrices).length + 1}`);
   state.matrices[matrix.id] = matrix;
   state.activeMatrixId = matrix.id;
-  scheduleSave();
+  scheduleSave({ history: true });
   render();
   elements.title.select();
 });
@@ -2013,7 +2172,16 @@ document.addEventListener('pointerdown', (event) => {
 
 document.addEventListener('keydown', (event) => {
   const editable = event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"]');
-  if (event.key.toLowerCase() === 'm' && !event.ctrlKey && !event.metaKey && !event.altKey && !editable && !document.querySelector('dialog[open]')) {
+  const modifier = event.ctrlKey || event.metaKey;
+  const key = event.key.toLowerCase();
+  if (modifier && !event.altKey && !editable && !document.querySelector('dialog[open]') && (key === 'z' || key === 'y')) {
+    event.preventDefault();
+    if (event.repeat) return;
+    if (key === 'y' || (key === 'z' && event.shiftKey)) redoWorkspace();
+    else undoWorkspace();
+    return;
+  }
+  if (key === 'm' && !event.ctrlKey && !event.metaKey && !event.altKey && !editable && !document.querySelector('dialog[open]')) {
     event.preventDefault();
     if (event.repeat) return;
     state.settings.minimapVisible = !state.settings.minimapVisible;
@@ -2040,6 +2208,7 @@ async function init() {
   state = normalizeState(await window.matrixAPI.loadWorkspace());
   applyTheme();
   render();
+  resetHistory();
 }
 
 init().catch((error) => {
@@ -2047,5 +2216,6 @@ init().catch((error) => {
   state = defaultState();
   applyTheme();
   render();
+  resetHistory();
   toast('工作区载入失败，已创建新的本地矩阵', true);
 });

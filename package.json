@@ -1,6 +1,6 @@
 {
   "name": "data-matrix",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "一个面向文件、网页、结构化数据和嵌套矩阵的二维效率工作区。",
   "author": "AlanFEVM",
   "license": "MIT",

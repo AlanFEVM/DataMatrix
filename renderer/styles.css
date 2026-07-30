@@ -354,6 +354,9 @@ body.cascade-cells .matrix-cell.has-thumbnail:not(.has-custom-color) .cell-icon 
 .matrix-cell.has-matrix-color:not(.has-custom-color) { border-color: color-mix(in srgb, var(--matrix-color) 42%, var(--line)); background: color-mix(in srgb, var(--matrix-color) 9%, var(--surface-raised)); }
 .matrix-cell.has-matrix-color:not(.has-custom-color) .cell-accent { color: var(--matrix-color); }
 .matrix-cell.has-matrix-color:not(.has-custom-color) .cell-icon { color: var(--matrix-color); background: color-mix(in srgb, var(--matrix-color) 18%, var(--surface-raised)); }
+body.colorful-cells .matrix-cell.has-adaptive-color:not(.has-custom-color) { color: var(--app-color); border-color: color-mix(in srgb, var(--app-color) 43%, var(--line)); background: color-mix(in srgb, var(--app-color) 9%, var(--surface-raised)); }
+body.colorful-cells .matrix-cell.has-adaptive-color:not(.has-custom-color) .cell-accent { color: var(--app-color); }
+body.colorful-cells .matrix-cell.has-adaptive-color:not(.has-custom-color) .cell-icon:not(.has-system-icon) { color: var(--app-color); background: color-mix(in srgb, var(--app-color) 17%, var(--surface-raised)); }
 
 .theme-panel { position: fixed; z-index: 45; top: 44px; right: 0; width: 348px; height: calc(100vh - 44px); padding: 24px; background: var(--surface-raised); border-left: 1px solid var(--line); box-shadow: -18px 0 42px rgba(29, 33, 30, .1); transform: translateX(105%); transition: transform .28s cubic-bezier(.2, .75, .2, 1); }
 .theme-panel.open { transform: translateX(0); }
