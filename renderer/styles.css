@@ -167,6 +167,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px
 .tree-item.active { color: var(--accent-strong); background: var(--accent-soft); font-weight: 650; }
 .tree-item[draggable="true"] { cursor: grab; }
 .tree-item.tree-drag-source { color: var(--accent); background: var(--accent-faint); opacity: .48; }
+.tree-item.matrix-transfer-target { color: var(--accent-strong); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); transform: translateX(3px); }
+.tree-item.matrix-transfer-blocked { color: #c94d43; background: color-mix(in srgb, #c94d43 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, #c94d43 55%, transparent); cursor: not-allowed !important; }
 .tree-matrix-icon { width: 22px; height: 22px; border-radius: 5px; display: grid; place-items: center; color: var(--text-faint); background: color-mix(in srgb, var(--text) 5%, transparent); flex: none; transition: color .16s, background .16s; }
 .tree-row.nested .tree-matrix-icon { color: var(--matrix); background: color-mix(in srgb, var(--matrix) 12%, transparent); }
 .tree-item.active .tree-matrix-icon { color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--surface-raised)); }
@@ -288,14 +290,19 @@ body.matrix-tree-drag .matrix-cell:not(.empty) { filter: saturate(.7); opacity: 
 .matrix-cell.matrix-drop-blocked { border-color: color-mix(in srgb, #c94d43 60%, var(--line)); opacity: .46 !important; cursor: not-allowed; }
 .matrix-cell.swap-source { animation: none; opacity: .3; transform: scale(.965); border-style: dashed; }
 .matrix-cell.swap-target { z-index: 4; animation: none; transform: translate(var(--swap-shift-x), var(--swap-shift-y)); border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent), 0 12px 28px rgba(30, 35, 31, .15); transition: transform .23s cubic-bezier(.2, .8, .2, 1), box-shadow .18s, border-color .18s; }
+.matrix-cell.matrix-transfer-target { z-index: 4; animation: none; transform: translateY(-3px) scale(1.025); border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent), 0 12px 28px rgba(30, 35, 31, .15); }
+.matrix-cell.matrix-transfer-blocked { z-index: 4; animation: none; border-color: #c94d43; box-shadow: 0 0 0 3px color-mix(in srgb, #c94d43 16%, transparent); opacity: .58; cursor: not-allowed !important; }
 .is-swapping .matrix-cell { animation: none; }
 .is-swapping, .is-swapping * { cursor: grabbing !important; }
+.is-cross-matrix-drag .tree-item, .is-cross-matrix-drag .matrix-cell.cell-type-matrix { cursor: copy !important; }
+.is-cross-matrix-drag .matrix-transfer-blocked { cursor: not-allowed !important; }
 .swap-drop-marker { position: fixed; z-index: 2; border: 2px dashed var(--accent); border-radius: 7px; background: color-mix(in srgb, var(--accent) 8%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--surface-raised) 55%, transparent); pointer-events: none; transition: left .16s cubic-bezier(.2,.8,.2,1), top .16s cubic-bezier(.2,.8,.2,1), width .16s, height .16s; }
 .swap-drop-marker[hidden] { display: none; }
 .swap-ghost { --swap-color: var(--accent); position: fixed; z-index: 100; top: 0; left: 0; width: 174px; height: 46px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--swap-color) 45%, var(--line)); border-left: 3px solid var(--swap-color); border-radius: 6px; display: flex; align-items: center; gap: 9px; color: var(--text); background: color-mix(in srgb, var(--swap-color) 9%, var(--surface-raised)); box-shadow: var(--shadow); pointer-events: none; }
 .swap-ghost svg { width: 16px; height: 16px; color: var(--swap-color); flex: none; }
 .swap-ghost > span { font-family: "Segoe UI Emoji", "Apple Color Emoji", sans-serif; font-size: 18px; line-height: 1; }
 .swap-ghost strong { min-width: 0; overflow: hidden; font-size: 12px; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
+.swap-ghost.cross-matrix-ghost { border-style: dashed; }
 .matrix-cell.empty { border-style: dashed; color: var(--text-faint); background: color-mix(in srgb, var(--surface-raised) 62%, transparent); cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .matrix-cell.empty:hover { color: var(--accent); border-color: var(--accent); background: var(--accent-faint); }
 .empty-content { display: flex; flex-direction: column; align-items: center; gap: 8px; font-size: 12px; }

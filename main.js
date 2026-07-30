@@ -313,6 +313,12 @@ function createWindow() {
         mainWindow.showInactive();
         await new Promise((resolve) => setTimeout(resolve, 150));
         const swapResult = await mainWindow.webContents.executeJavaScript(`(() => {
+          state = defaultState();
+          state.settings.mode = 'dark';
+          applyTheme();
+          activeMatrix().rows = 3;
+          activeMatrix().cols = 4;
+          activeMatrix().cells = {};
           activeMatrix().cells['0:0'] = { type: 'text', title: '任务 A', value: '第一个单元格', appearance: { color: '#476fbd', emoji: '📌' } };
           activeMatrix().cells['0:1'] = { type: 'text', title: '任务 B', value: '第二个单元格', appearance: { color: '#d05e43', emoji: '🚀' } };
           render();
@@ -330,8 +336,52 @@ function createWindow() {
           swapCells(0, 1, 0, 2);
           const movedToEmpty = !activeMatrix().cells['0:1'] && activeMatrix().cells['0:2'].title === '任务 A';
           swapCells(0, 2, 0, 1);
+          const root = activeMatrix();
+          const rootId = root.id;
+          const nested = createMatrix('子矩阵目标', root.id, 1, 1);
+          const treeTarget = createMatrix('侧栏目标', null, 1, 1);
+          nested.cells['0:0'] = { id: uid(), type: 'text', title: '子矩阵已有项目', value: '' };
+          treeTarget.cells['0:0'] = { id: uid(), type: 'text', title: '侧栏矩阵已有项目', value: '' };
+          state.matrices[nested.id] = nested;
+          state.matrices[treeTarget.id] = treeTarget;
+          const nestedMoveCell = { id: uid(), type: 'text', title: '移入子矩阵', value: '' };
+          const treeMoveCell = { id: uid(), type: 'text', title: '移入侧栏矩阵', value: '' };
+          root.cells = {
+            '0:0': nestedMoveCell,
+            '0:1': treeMoveCell,
+            '0:2': { id: uid(), type: 'matrix', title: nested.title, matrixId: nested.id }
+          };
+          state.favorites = [nestedMoveCell.id, treeMoveCell.id];
+          render();
+          resetHistory();
+          const dispatchTransfer = (sourceSelector, targetSelector, pointerId) => {
+            const source = document.querySelector(sourceSelector);
+            const target = document.querySelector(targetSelector);
+            const sourceRect = source.getBoundingClientRect();
+            const targetRect = target.getBoundingClientRect();
+            source.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 2, buttons: 2, ctrlKey: true, pointerId, clientX: sourceRect.left + 30, clientY: sourceRect.top + 30 }));
+            document.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, button: -1, buttons: 2, ctrlKey: true, pointerId, clientX: targetRect.left + targetRect.width / 2, clientY: targetRect.top + targetRect.height / 2 }));
+            const highlighted = target.classList.contains('matrix-transfer-target');
+            document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, button: 2, buttons: 0, ctrlKey: true, pointerId, clientX: targetRect.left + targetRect.width / 2, clientY: targetRect.top + targetRect.height / 2 }));
+            return highlighted;
+          };
+          const cycleBlocked = !canMoveCellToMatrix(root.cells['0:2'], root.id, nested.id);
+          const nestedTargetHighlighted = dispatchTransfer('.matrix-cell[data-row="0"][data-col="0"]', '.matrix-cell[data-row="0"][data-col="2"]', 51);
+          const nestedExpanded = state.matrices[nested.id].rows === 2;
+          const movedToNested = state.matrices[nested.id].cells['1:0']?.id === nestedMoveCell.id && !root.cells['0:0'];
+          const treeTargetHighlighted = dispatchTransfer('.matrix-cell[data-row="0"][data-col="1"]', '.tree-item[data-matrix-id="' + treeTarget.id + '"]', 52);
+          const treeTargetExpanded = state.matrices[treeTarget.id].rows === 2;
+          const movedToTreeTarget = state.matrices[treeTarget.id].cells['1:0']?.id === treeMoveCell.id && !root.cells['0:1'];
+          const favoritesPreserved = state.favorites.includes(nestedMoveCell.id) && state.favorites.includes(treeMoveCell.id);
+          undoWorkspace();
+          const transferUndoRestored = state.matrices[rootId].cells['0:1']?.id === treeMoveCell.id && state.matrices[treeTarget.id].rows === 1;
+          redoWorkspace();
+          const transferRedoRestored = state.matrices[treeTarget.id].cells['1:0']?.id === treeMoveCell.id && !state.matrices[rootId].cells['0:1'];
+          state.matrices[rootId].cells['0:0'] = { type: 'text', title: '任务 A', value: '第一个单元格' };
+          state.matrices[rootId].cells['0:1'] = { type: 'text', title: '任务 B', value: '第二个单元格' };
+          render();
           dispatchSwap(42, false);
-          return { swapped, movedToEmpty, dragging: document.body.classList.contains('is-swapping'), targetHighlighted: Boolean(document.querySelector('.swap-target')), ghostVisible: Boolean(document.querySelector('.swap-ghost')) };
+          return { swapped, movedToEmpty, cycleBlocked, nestedTargetHighlighted, nestedExpanded, movedToNested, treeTargetHighlighted, treeTargetExpanded, movedToTreeTarget, favoritesPreserved, transferUndoRestored, transferRedoRestored, dragging: document.body.classList.contains('is-swapping'), targetHighlighted: Boolean(document.querySelector('.swap-target')), ghostVisible: Boolean(document.querySelector('.swap-ghost')) };
         })()`);
         console.log('Right-button swap smoke test:', swapResult);
       }

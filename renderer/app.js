@@ -70,6 +70,7 @@ let swapDrag = null;
 let panDrag = null;
 let minimapDrag = null;
 let draggedMatrixId = null;
+let suppressTreeContextMenuUntil = 0;
 let minimapMetrics = null;
 let minimapFrame = null;
 const thumbnailCache = new Map();
@@ -773,21 +774,96 @@ function swapCells(sourceRow, sourceCol, targetRow, targetCol) {
   return true;
 }
 
-function createSwapGhost(cell) {
+function canMoveCellToMatrix(cell, sourceMatrixId, targetMatrixId) {
+  if (!cell || !state.matrices[targetMatrixId] || sourceMatrixId === targetMatrixId) return false;
+  if (cell.type !== 'matrix' || !state.matrices[cell.matrixId]) return true;
+  return !pathToMatrix(targetMatrixId).some((matrix) => matrix.id === cell.matrixId);
+}
+
+function firstEmptyMatrixCell(matrix) {
+  for (let row = 0; row < matrix.rows; row += 1) {
+    for (let col = 0; col < matrix.cols; col += 1) {
+      if (!matrix.cells[cellKey(row, col)]) return { row, col, expanded: false };
+    }
+  }
+  matrix.rows += 1;
+  return { row: matrix.rows - 1, col: 0, expanded: true };
+}
+
+function moveCellToMatrix(sourceMatrixId, sourceRow, sourceCol, targetMatrixId) {
+  const sourceMatrix = state.matrices[sourceMatrixId];
+  const targetMatrix = state.matrices[targetMatrixId];
+  const sourceKey = cellKey(sourceRow, sourceCol);
+  const cell = sourceMatrix?.cells[sourceKey];
+  if (!canMoveCellToMatrix(cell, sourceMatrixId, targetMatrixId)) return null;
+
+  const destination = firstEmptyMatrixCell(targetMatrix);
+  delete sourceMatrix.cells[sourceKey];
+  targetMatrix.cells[cellKey(destination.row, destination.col)] = cell;
+  if (cell.type === 'matrix' && state.matrices[cell.matrixId]) state.matrices[cell.matrixId].parentId = targetMatrixId;
+  const now = Date.now();
+  sourceMatrix.updatedAt = now;
+  targetMatrix.updatedAt = now;
+  scheduleSave({ history: true });
+  render();
+  return destination;
+}
+
+function createSwapGhost(cell, crossMatrix = false) {
   const ghost = document.createElement('div');
-  ghost.className = 'swap-ghost';
+  ghost.className = `swap-ghost${crossMatrix ? ' cross-matrix-ghost' : ''}`;
   if (validCellColor(cell?.appearance?.color)) {
     ghost.classList.add('has-color');
     ghost.style.setProperty('--swap-color', cell.appearance.color);
   }
-  const symbol = cell?.appearance?.emoji ? `<span>${escapeHtml(cell.appearance.emoji)}</span>` : '<i data-lucide="repeat-2"></i>';
+  const symbol = cell?.appearance?.emoji ? `<span>${escapeHtml(cell.appearance.emoji)}</span>` : `<i data-lucide="${crossMatrix ? 'move-right' : 'repeat-2'}"></i>`;
   ghost.innerHTML = `${symbol}<strong>${escapeHtml(cell?.title || '空单元格')}</strong>`;
   document.body.append(ghost);
   refreshIcons();
   return ghost;
 }
 
+function clearSwapTarget(drag = swapDrag) {
+  drag?.targetElement?.classList.remove('swap-target', 'matrix-transfer-target', 'matrix-transfer-blocked');
+  drag?.targetElement?.style.removeProperty('--swap-shift-x');
+  drag?.targetElement?.style.removeProperty('--swap-shift-y');
+}
+
+function updateCrossMatrixTarget(event) {
+  const hit = document.elementFromPoint(event.clientX, event.clientY);
+  const treeItem = hit?.closest('.tree-item[data-matrix-id]');
+  const gridCell = hit?.closest('.matrix-cell');
+  let targetElement = null;
+  let targetMatrixId = null;
+
+  if (treeItem) {
+    targetElement = treeItem;
+    targetMatrixId = treeItem.dataset.matrixId;
+  } else if (gridCell) {
+    const matrixCell = state.matrices[swapDrag.sourceMatrixId]?.cells[cellKey(Number(gridCell.dataset.row), Number(gridCell.dataset.col))];
+    if (matrixCell?.type === 'matrix' && state.matrices[matrixCell.matrixId]) {
+      targetElement = gridCell;
+      targetMatrixId = matrixCell.matrixId;
+    }
+  }
+
+  const sourceCell = state.matrices[swapDrag.sourceMatrixId]?.cells[cellKey(swapDrag.sourceRow, swapDrag.sourceCol)];
+  const blocked = Boolean(targetElement) && !canMoveCellToMatrix(sourceCell, swapDrag.sourceMatrixId, targetMatrixId);
+  if (targetElement !== swapDrag.targetElement || targetMatrixId !== swapDrag.targetMatrixId || blocked !== swapDrag.targetBlocked) {
+    clearSwapTarget();
+    swapDrag.targetElement = targetElement;
+    swapDrag.targetMatrixId = targetMatrixId;
+    swapDrag.targetBlocked = blocked;
+    targetElement?.classList.add(blocked ? 'matrix-transfer-blocked' : 'matrix-transfer-target');
+  }
+  swapDrag.marker.hidden = true;
+}
+
 function updateSwapTarget(event) {
+  if (swapDrag.crossMatrix) {
+    updateCrossMatrixTarget(event);
+    return;
+  }
   const canvas = $('#canvas');
   const scrollDeltaX = canvas.scrollLeft - swapDrag.startScrollLeft;
   const scrollDeltaY = canvas.scrollTop - swapDrag.startScrollTop;
@@ -802,9 +878,7 @@ function updateSwapTarget(event) {
   });
   const target = targetLayout?.element || null;
   if (target !== swapDrag.targetElement) {
-    swapDrag.targetElement?.classList.remove('swap-target');
-    swapDrag.targetElement?.style.removeProperty('--swap-shift-x');
-    swapDrag.targetElement?.style.removeProperty('--swap-shift-y');
+    clearSwapTarget();
     swapDrag.targetElement = target;
     if (target) {
       const sourceRect = swapDrag.cellLayouts.find(({ element }) => element === swapDrag.sourceElement).rect;
@@ -845,8 +919,9 @@ function handleSwapPointerMove(event) {
     swapDrag.dragging = true;
     swapDrag.sourceElement.classList.add('swap-source');
     document.body.classList.add('is-swapping');
-    const sourceCell = activeMatrix().cells[cellKey(swapDrag.sourceRow, swapDrag.sourceCol)];
-    swapDrag.ghost = createSwapGhost(sourceCell);
+    if (swapDrag.crossMatrix) document.body.classList.add('is-cross-matrix-drag');
+    const sourceCell = state.matrices[swapDrag.sourceMatrixId]?.cells[cellKey(swapDrag.sourceRow, swapDrag.sourceCol)];
+    swapDrag.ghost = createSwapGhost(sourceCell, swapDrag.crossMatrix);
     swapDrag.marker = document.createElement('div');
     swapDrag.marker.className = 'swap-drop-marker';
     swapDrag.marker.hidden = true;
@@ -866,15 +941,23 @@ function finishSwapDrag(event, cancelled = false) {
   const current = swapDrag;
   try { current.sourceElement.releasePointerCapture(current.pointerId); } catch {}
   current.sourceElement.classList.remove('swap-source');
-  current.targetElement?.classList.remove('swap-target');
-  current.targetElement?.style.removeProperty('--swap-shift-x');
-  current.targetElement?.style.removeProperty('--swap-shift-y');
+  clearSwapTarget(current);
   current.ghost?.remove();
   current.marker?.remove();
-  document.body.classList.remove('is-swapping');
+  document.body.classList.remove('is-swapping', 'is-cross-matrix-drag');
   swapDrag = null;
 
   if (cancelled || !current.dragging || !current.targetElement) return;
+  suppressTreeContextMenuUntil = Date.now() + 250;
+  if (current.crossMatrix) {
+    if (current.targetBlocked || !current.targetMatrixId) return;
+    const destination = moveCellToMatrix(current.sourceMatrixId, current.sourceRow, current.sourceCol, current.targetMatrixId);
+    if (destination) {
+      const suffix = destination.expanded ? '，目标矩阵已自动增加一行' : '';
+      toast(`项目已移动到“${state.matrices[current.targetMatrixId].title}”${suffix}`);
+    }
+    return;
+  }
   const targetRow = Number(current.targetElement.dataset.row);
   const targetCol = Number(current.targetElement.dataset.col);
   if (swapCells(current.sourceRow, current.sourceCol, targetRow, targetCol)) toast('单元格已交换');
@@ -1483,6 +1566,7 @@ elements.tree.addEventListener('contextmenu', (event) => {
   const row = event.target.closest('.tree-row[data-tree-matrix-id]');
   if (!row) return;
   event.preventDefault();
+  if (Date.now() < suppressTreeContextMenuUntil) return;
   finishMatrixTreeDrag();
   treeContextMatrixId = row.dataset.treeMatrixId;
   hidePopovers(elements.matrixContextMenu);
@@ -1618,18 +1702,27 @@ elements.grid.addEventListener('pointerdown', (event) => {
   if (event.button !== 2) return;
   const cellElement = event.target.closest('.matrix-cell');
   if (!cellElement) return;
+  const sourceMatrix = activeMatrix();
+  const sourceRow = Number(cellElement.dataset.row);
+  const sourceCol = Number(cellElement.dataset.col);
+  const crossMatrix = event.ctrlKey;
+  if (crossMatrix && !sourceMatrix.cells[cellKey(sourceRow, sourceCol)]) return;
   event.preventDefault();
   hidePopovers();
   const canvas = $('#canvas');
   swapDrag = {
     pointerId: event.pointerId,
     sourceElement: cellElement,
-    sourceRow: Number(cellElement.dataset.row),
-    sourceCol: Number(cellElement.dataset.col),
+    sourceMatrixId: sourceMatrix.id,
+    sourceRow,
+    sourceCol,
+    crossMatrix,
     startX: event.clientX,
     startY: event.clientY,
     dragging: false,
     targetElement: null,
+    targetMatrixId: null,
+    targetBlocked: false,
     ghost: null,
     marker: null,
     startScrollLeft: canvas.scrollLeft,
