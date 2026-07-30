@@ -66,24 +66,82 @@ function expandWindowsEnvironmentPath(filePath) {
   return filePath.replace(/%([^%]+)%/g, (match, name) => process.env[name] || match);
 }
 
+function decodeInternetShortcut(buffer) {
+  if (buffer[0] === 0xff && buffer[1] === 0xfe) return buffer.subarray(2).toString('utf16le');
+  if (buffer[0] === 0xfe && buffer[1] === 0xff) {
+    const swapped = Buffer.from(buffer.subarray(2));
+    for (let index = 0; index + 1 < swapped.length; index += 2) {
+      [swapped[index], swapped[index + 1]] = [swapped[index + 1], swapped[index]];
+    }
+    return swapped.toString('utf16le');
+  }
+  return buffer.toString('utf8').replace(/^\uFEFF/, '');
+}
+
+function internetShortcutIconPath(contents, shortcutPath) {
+  let section = '';
+  let iconFile = '';
+  for (const rawLine of contents.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const sectionMatch = line.match(/^\[([^\]]+)\]$/);
+    if (sectionMatch) {
+      section = sectionMatch[1].toLowerCase();
+      continue;
+    }
+    if (section !== 'internetshortcut') continue;
+    const separator = line.indexOf('=');
+    if (separator < 1 || line.slice(0, separator).trim().toLowerCase() !== 'iconfile') continue;
+    iconFile = line.slice(separator + 1).trim().replace(/^"|"$/g, '');
+    break;
+  }
+  if (!iconFile) return '';
+  const expanded = expandWindowsEnvironmentPath(iconFile);
+  return path.isAbsolute(expanded) ? expanded : path.resolve(path.dirname(shortcutPath), expanded);
+}
+
+async function iconDataUrl(candidate, preferImage = false) {
+  try {
+    if (preferImage) {
+      const image = nativeImage.createFromPath(candidate);
+      if (!image.isEmpty()) return image.toDataURL();
+    }
+    const icon = await app.getFileIcon(candidate, { size: 'large' });
+    return icon.isEmpty() ? null : icon.toDataURL();
+  } catch {
+    return null;
+  }
+}
+
 async function getFileIconDataUrl(filePath) {
+  try {
+    if ((await fs.stat(filePath)).isDirectory()) return { dataUrl: null, kind: 'directory' };
+  } catch {}
+
   const candidates = [];
-  if (process.platform === 'win32' && path.extname(filePath).toLowerCase() === '.lnk') {
+  const extension = path.extname(filePath).toLowerCase();
+  if (process.platform === 'win32' && extension === '.lnk') {
     try {
       const shortcut = shell.readShortcutLink(filePath);
-      if (shortcut.icon) candidates.push(expandWindowsEnvironmentPath(shortcut.icon));
-      if (shortcut.target) candidates.push(expandWindowsEnvironmentPath(shortcut.target));
+      if (shortcut.icon) candidates.push({ path: expandWindowsEnvironmentPath(shortcut.icon), preferImage: true });
+      if (shortcut.target) candidates.push({ path: expandWindowsEnvironmentPath(shortcut.target) });
     } catch {}
   }
-  candidates.push(filePath);
-
-  for (const candidate of [...new Set(candidates.filter(Boolean))]) {
+  if (process.platform === 'win32' && extension === '.url') {
     try {
-      const icon = await app.getFileIcon(candidate, { size: 'large' });
-      if (!icon.isEmpty()) return icon.toDataURL();
+      const iconPath = internetShortcutIconPath(decodeInternetShortcut(await fs.readFile(filePath)), filePath);
+      if (iconPath) candidates.push({ path: iconPath, preferImage: true });
     } catch {}
   }
-  return null;
+  candidates.push({ path: filePath });
+
+  const visited = new Set();
+  for (const candidate of candidates) {
+    if (!candidate.path || visited.has(candidate.path.toLowerCase())) continue;
+    visited.add(candidate.path.toLowerCase());
+    const dataUrl = await iconDataUrl(candidate.path, candidate.preferImage);
+    if (dataUrl) return { dataUrl, kind: 'file' };
+  }
+  return { dataUrl: null, kind: 'file' };
 }
 
 function createWindow() {
@@ -192,6 +250,7 @@ function createWindow() {
       if (process.argv.includes('--screenshot-automation')) {
         await fs.mkdir(testArtifacts, { recursive: true });
         const shortcutPath = path.join(testArtifacts, 'DataMatrix Test.lnk');
+        const urlShortcutPath = path.join(testArtifacts, 'DataMatrix Website.url');
         const systemAppPath = process.platform === 'win32'
           ? path.join(process.env.WINDIR || 'C:\\Windows', 'System32', 'notepad.exe')
           : process.execPath;
@@ -203,6 +262,7 @@ function createWindow() {
           iconIndex: 0,
           description: 'DataMatrix shortcut icon test'
         });
+        await fs.writeFile(urlShortcutPath, `[InternetShortcut]\r\nURL=https://example.com/\r\nIconFile=${systemAppPath}\r\nIconIndex=0\r\n`, 'utf8');
         const automationPath = shortcutCreated ? shortcutPath : process.execPath;
         const automationResult = await mainWindow.webContents.executeJavaScript(`(async () => {
           activeMatrix().rows = 3;
@@ -210,13 +270,19 @@ function createWindow() {
           activeMatrix().cells = {};
           render();
           resetHistory();
-          assignFiles([${JSON.stringify(automationPath)}], 0, 0);
+          assignFiles([${JSON.stringify(automationPath)}, ${JSON.stringify(testArtifacts)}, ${JSON.stringify(urlShortcutPath)}], 0, 0);
           await new Promise((resolve) => setTimeout(resolve, 900));
           const card = document.querySelector('.matrix-cell[data-row="0"][data-col="0"]');
           const iconImage = card?.querySelector('[data-app-icon]');
           const iconLoaded = iconImage?.closest('.cell-icon')?.classList.contains('has-system-icon') || false;
           const adaptiveColor = card?.classList.contains('has-adaptive-color') && Boolean(getComputedStyle(card).getPropertyValue('--app-color').trim());
           const shortcutTitle = activeMatrix().cells['0:0']?.title;
+          const folderCard = document.querySelector('.matrix-cell[data-row="0"][data-col="1"]');
+          const folderIconCorrect = Boolean(folderCard?.querySelector('.lucide-folder'));
+          const folderSystemIconHidden = !folderCard?.querySelector('.cell-icon')?.classList.contains('has-system-icon');
+          const urlCard = document.querySelector('.matrix-cell[data-row="0"][data-col="2"]');
+          const urlIconLoaded = urlCard?.querySelector('.cell-icon')?.classList.contains('has-system-icon') || false;
+          const urlShortcutTitle = activeMatrix().cells['0:2']?.title;
           const rowsBefore = activeMatrix().rows;
           document.querySelector('#addRowBtn').click();
           document.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true }));
@@ -232,6 +298,10 @@ function createWindow() {
             shortcutTitle,
             iconLoaded,
             adaptiveColor,
+            folderIconCorrect,
+            folderSystemIconHidden,
+            urlIconLoaded,
+            urlShortcutTitle,
             undoRestoredRows,
             redoRestoredRows,
             finalRowsRestored: activeMatrix().rows === rowsBefore

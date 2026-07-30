@@ -992,7 +992,17 @@ function hydrateAppIcons() {
     if (!appIconCache.has(filePath)) {
       appIconCache.set(filePath, window.matrixAPI.getFileIcon(filePath).catch(() => null));
     }
-    const dataUrl = await appIconCache.get(filePath);
+    const iconResult = await appIconCache.get(filePath);
+    const dataUrl = typeof iconResult === 'string' ? iconResult : iconResult?.dataUrl;
+    if (iconResult?.kind === 'directory') {
+      const container = image.closest('.cell-icon');
+      const fallback = container?.querySelector('.app-icon-fallback');
+      if (fallback) fallback.outerHTML = '<i class="app-icon-fallback" data-lucide="folder"></i>';
+      const subtitle = image.closest('.matrix-cell')?.querySelector('.cell-subtitle');
+      if (subtitle) subtitle.textContent = '文件夹';
+      refreshIcons();
+      return;
+    }
     if (!dataUrl || !image.isConnected || decodeURIComponent(image.dataset.appIcon) !== filePath) return;
     image.addEventListener('load', () => {
       image.closest('.cell-icon')?.classList.add('has-system-icon');
