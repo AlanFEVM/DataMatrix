@@ -128,4 +128,5 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: gh release create "$GITHUB_REF_NAME" release/* --generate-notes --title "数据矩阵 $GITHUB_REF_NAME"
