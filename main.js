@@ -113,12 +113,14 @@ async function iconDataUrl(candidate, preferImage = false) {
 }
 
 async function getFileIconDataUrl(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
   try {
-    if ((await fs.stat(filePath)).isDirectory()) return { dataUrl: null, kind: 'directory' };
+    const isDirectory = (await fs.stat(filePath)).isDirectory();
+    const isMacApplication = process.platform === 'darwin' && extension === '.app';
+    if (isDirectory && !isMacApplication) return { dataUrl: null, kind: 'directory' };
   } catch {}
 
   const candidates = [];
-  const extension = path.extname(filePath).toLowerCase();
   if (process.platform === 'win32' && extension === '.lnk') {
     try {
       const shortcut = shell.readShortcutLink(filePath);
@@ -152,7 +154,8 @@ function createWindow() {
     minHeight: 640,
     show: false,
     backgroundColor: '#f4f4f0',
-    titleBarStyle: 'hidden',
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    ...(process.platform === 'darwin' ? { trafficLightPosition: { x: 14, y: 14 } } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

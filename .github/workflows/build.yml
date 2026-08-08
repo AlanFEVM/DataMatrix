@@ -25,7 +25,7 @@ jobs:
       - name: Build Windows packages
         shell: pwsh
         run: |
-          npm run dist 2>&1 | Tee-Object -FilePath packaging.log
+          npm run dist:win 2>&1 | Tee-Object -FilePath packaging.log
           $buildExitCode = $LASTEXITCODE
           if ($buildExitCode -ne 0) {
             $tail = (Get-Content packaging.log -Tail 40) -join "`n"
@@ -52,5 +52,50 @@ jobs:
           name: DataMatrix-Windows
           path: |
             release/*.exe
+            release/*.zip
+          if-no-files-found: error
+
+  macos:
+    name: macOS (${{ matrix.arch }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Prepare Electron runtime
+        shell: bash
+        env:
+          ELECTRON_INSTALL_ARCH: ${{ matrix.arch }}
+        run: |
+          rm -rf node_modules/electron/dist
+          node node_modules/electron/install.js
+          test -x "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+          runtime_arch=$(lipo -archs "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron")
+          expected_arch="${{ matrix.arch }}"
+          if [ "$expected_arch" = "x64" ]; then expected_arch="x86_64"; fi
+          echo "$runtime_arch" | grep -qw "$expected_arch"
+      - run: npm run check
+      - name: Build macOS packages
+        run: npm run dist:mac -- --${{ matrix.arch }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Verify package artifacts
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          test -f "release/DataMatrix-$version-${{ matrix.arch }}.dmg"
+          test -f "release/DataMatrix-$version-${{ matrix.arch }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DataMatrix-macOS-${{ matrix.arch }}
+          path: |
+            release/*.dmg
             release/*.zip
           if-no-files-found: error

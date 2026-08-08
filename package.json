@@ -1,6 +1,6 @@
 {
   "name": "data-matrix",
-  "version": "1.1.7",
+  "version": "1.2.0",
   "description": "一个面向文件、网页、结构化数据和嵌套矩阵的二维效率工作区。",
   "author": "AlanFEVM",
   "license": "MIT",
@@ -18,7 +18,9 @@
     "dev": "electron . --dev",
     "check": "node --check main.js && node --check preload.js && node --check renderer/app.js",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder --win nsis portable --publish never && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable-zip.ps1"
+    "dist": "npm run dist:win",
+    "dist:win": "electron-builder --win nsis portable --publish never && powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/package-portable-zip.ps1",
+    "dist:mac": "electron-builder --mac dmg zip --publish never"
   },
   "dependencies": {
     "dompurify": "^3.4.12",
@@ -64,6 +66,16 @@
         }
       ],
       "artifactName": "DataMatrix-Portable-${version}-${arch}.${ext}"
+    },
+    "mac": {
+      "icon": "build/icon.png",
+      "category": "public.app-category.productivity",
+      "identity": null,
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "artifactName": "DataMatrix-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,

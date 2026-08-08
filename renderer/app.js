@@ -1,3 +1,5 @@
+document.documentElement.dataset.platform = window.matrixAPI.platform;
+
 const $ = (selector) => document.querySelector(selector);
 
 const elements = {
@@ -269,7 +271,7 @@ function fileName(filePath) {
 
 function fileDisplayName(filePath) {
   const name = fileName(filePath);
-  return /\.(lnk|url)$/i.test(name) ? name.replace(/\.(lnk|url)$/i, '') : name;
+  return /\.(lnk|url|webloc)$/i.test(name) ? name.replace(/\.(lnk|url|webloc)$/i, '') : name;
 }
 
 function fileExtension(filePath) {
@@ -280,7 +282,7 @@ function fileExtension(filePath) {
 
 function fileIcon(filePath) {
   const ext = fileExtension(filePath).toLowerCase();
-  if (['exe', 'app', 'msi', 'bat', 'cmd', 'lnk', 'url'].includes(ext)) return 'app-window';
+  if (['exe', 'app', 'msi', 'bat', 'cmd', 'lnk', 'url', 'webloc'].includes(ext)) return 'app-window';
   if (['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'].includes(ext)) return 'image';
   if (['xls', 'xlsx', 'csv'].includes(ext)) return 'sheet';
   if (['zip', 'rar', '7z', 'tar', 'gz'].includes(ext)) return 'archive';
@@ -291,7 +293,7 @@ function fileIcon(filePath) {
 }
 
 function isApplicationFile(filePath) {
-  return ['exe', 'app', 'msi', 'bat', 'cmd', 'lnk', 'url'].includes(fileExtension(filePath).toLowerCase());
+  return ['exe', 'app', 'msi', 'bat', 'cmd', 'lnk', 'url', 'webloc'].includes(fileExtension(filePath).toLowerCase());
 }
 
 function isImageFile(filePath) {
@@ -533,7 +535,7 @@ function cellMarkup(cell) {
   let preview = '';
   if (cell.type === 'file') {
     icon = fileIcon(cell.value);
-    subtitle = /\.(lnk|url)$/i.test(cell.value) ? '快捷方式' : fileExtension(cell.value);
+    subtitle = /\.(lnk|url|webloc)$/i.test(cell.value) ? '快捷方式' : fileExtension(cell.value);
   } else if (cell.type === 'link') {
     icon = 'globe-2';
     try { subtitle = new URL(cell.value).hostname; } catch { subtitle = '网页链接'; }
@@ -1705,7 +1707,7 @@ elements.grid.addEventListener('pointerdown', (event) => {
   const sourceMatrix = activeMatrix();
   const sourceRow = Number(cellElement.dataset.row);
   const sourceCol = Number(cellElement.dataset.col);
-  const crossMatrix = event.ctrlKey;
+  const crossMatrix = window.matrixAPI.platform === 'darwin' ? event.metaKey : event.ctrlKey;
   if (crossMatrix && !sourceMatrix.cells[cellKey(sourceRow, sourceCol)]) return;
   event.preventDefault();
   hidePopovers();

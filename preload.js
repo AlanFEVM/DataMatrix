@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('matrixAPI', {
+  platform: process.platform,
   loadWorkspace: () => ipcRenderer.invoke('workspace:load'),
   saveWorkspace: (data) => ipcRenderer.invoke('workspace:save', data),
   pickFiles: () => ipcRenderer.invoke('file:pick'),

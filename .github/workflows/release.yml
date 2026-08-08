@@ -8,7 +8,21 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate tag version
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          test "$GITHUB_REF_NAME" = "v$version" || {
+            echo "Tag $GITHUB_REF_NAME does not match package version v$version" >&2
+            exit 1
+          }
+
+  windows:
+    needs: validate
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,7 +40,7 @@ jobs:
       - name: Build Windows packages
         shell: pwsh
         run: |
-          npm run dist 2>&1 | Tee-Object -FilePath packaging.log
+          npm run dist:win 2>&1 | Tee-Object -FilePath packaging.log
           $buildExitCode = $LASTEXITCODE
           if ($buildExitCode -ne 0) {
             $tail = (Get-Content packaging.log -Tail 40) -join "`n"
@@ -48,8 +62,70 @@ jobs:
           foreach ($artifact in $expected) {
             if (-not (Test-Path $artifact)) { throw "Package artifact is missing: $artifact" }
           }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DataMatrix-Windows
+          path: |
+            release/*.exe
+            release/*.zip
+          if-no-files-found: error
+
+  macos:
+    name: macOS (${{ matrix.arch }})
+    needs: validate
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Prepare Electron runtime
+        shell: bash
+        env:
+          ELECTRON_INSTALL_ARCH: ${{ matrix.arch }}
+        run: |
+          rm -rf node_modules/electron/dist
+          node node_modules/electron/install.js
+          test -x "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron"
+          runtime_arch=$(lipo -archs "node_modules/electron/dist/Electron.app/Contents/MacOS/Electron")
+          expected_arch="${{ matrix.arch }}"
+          if [ "$expected_arch" = "x64" ]; then expected_arch="x86_64"; fi
+          echo "$runtime_arch" | grep -qw "$expected_arch"
+      - run: npm run check
+      - name: Build macOS packages
+        run: npm run dist:mac -- --${{ matrix.arch }}
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - name: Verify package artifacts
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          test -f "release/DataMatrix-$version-${{ matrix.arch }}.dmg"
+          test -f "release/DataMatrix-$version-${{ matrix.arch }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DataMatrix-macOS-${{ matrix.arch }}
+          path: |
+            release/*.dmg
+            release/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
       - name: Publish release
-        shell: pwsh
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create $env:GITHUB_REF_NAME release/*.exe release/*.zip --generate-notes --title "数据矩阵 $env:GITHUB_REF_NAME"
+        run: gh release create "$GITHUB_REF_NAME" release/* --generate-notes --title "数据矩阵 $GITHUB_REF_NAME"
